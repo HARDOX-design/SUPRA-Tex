@@ -1,15 +1,31 @@
 <h1 align="center">SUPRA-Tex: 3D Generation with Super-Aligned Texture</h1>
 
 <p align="center">
-  Chen Yang · Jiemin Fang · Fanpeng Meng · Zihao Huang<br>
-  Jichen Pang · Guanjun Wu · Zhikuan Bao · Qi Tian
-</p>
-
-<p align="center">
   <a href="https://supra-3d.github.io/supratex/"><img src="https://img.shields.io/badge/Project-Page-blue" alt="Project page"></a>
+  <img src="https://img.shields.io/badge/Paper-arXiv-b31b1b" alt="arXiv paper" title="arXiv link coming soon">
   <a href="https://huggingface.co/spaces/UniLat3D/Supra-Tex"><img src="https://img.shields.io/badge/Demo-Hugging_Face-blueviolet" alt="Online demo"></a>
   <a href="https://huggingface.co/supra3d/supra-tex"><img src="https://img.shields.io/badge/Models-Hugging_Face-yellow" alt="Model weights"></a>
   <a href="LICENSE"><img src="https://img.shields.io/badge/License-MIT-green" alt="Source license"></a>
+</p>
+
+<p align="center">
+  <a href="https://chensjtu.github.io/">Chen Yang</a><sup>1*</sup>,
+  <a href="https://jaminfong.cn/">Jiemin Fang</a><sup>1*†✉</sup>,
+  <a href="https://mfp0610.github.io/">Fanpeng Meng</a><sup>1*</sup>,
+  <a href="https://inso-13.github.io/">Zihao Huang</a><sup>1</sup>,<br>
+  <a href="https://supra-3d.github.io/supratex/#paper">Jichen Pang</a><sup>2</sup>,
+  <a href="https://wuguanjun0627.github.io/">Guanjun Wu</a><sup>3</sup>,
+  <a href="https://supra-3d.github.io/supratex/#paper">Zhikuan Bao</a><sup>1</sup>,
+  <a href="https://www.qitian1987.com/index.html">Qi Tian</a><sup>1✉</sup>
+</p>
+
+<p align="center">
+  <sup>1</sup>Huawei Inc. &nbsp;&nbsp;
+  <sup>2</sup>Shanghai Jiao Tong University &nbsp;&nbsp;
+  <sup>3</sup>Huazhong University of Science and Technology<br>
+  <sup>*</sup>Equal contribution &nbsp;&nbsp;
+  <sup>†</sup>Project lead &nbsp;&nbsp;
+  <sup>✉</sup>Corresponding authors
 </p>
 
 https://github.com/user-attachments/assets/208ede7e-6db7-4f23-8deb-61d2ac5541f5
@@ -29,6 +45,10 @@ a relightable GLB with base color, metallic, and roughness textures.
 
 Learn more in the [method overview](docs/method.md), or try the
 [online demo](https://huggingface.co/spaces/UniLat3D/Supra-Tex).
+
+## Release Notes
+
+- **[2026-10-16]** Initial release of the [project page](https://supra-3d.github.io/supratex/) and README. Inference code will follow.
 
 ## Installation
 
@@ -71,8 +91,9 @@ hf auth login
 ```
 
 The inference command below downloads the required models on first use and
-reuses them on later runs. Both inference entrypoints use the release's
-[`pipeline.json`](pipeline.json) for model configuration.
+reuses them on later runs. Both inference entrypoints read model configuration
+from the selected model release; source defaults are in
+[`configs/pipeline.json`](configs/pipeline.json).
 See [model weights](docs/weights.md) for the complete dependency list and licenses.
 
 ## Usage
@@ -114,15 +135,6 @@ python texturing.py --pipeline supra3d/supra-tex \
 This entrypoint loads the completion model and TRELLIS.2 VAEs. The
 [material frontend](docs/frontend.md) can prepare the reference-view material maps.
 For an additional back-view observation, see [dual-view texturing](docs/dual_view.md).
-
-## Training
-
-We provide training code for the 3D completion model and the Qwen material adapter.
-
-- **3D completion:** Follow the [training guide](docs/training.md) to prepare
-  aligned shape, material, and partial-observation latents and configure a run.
-- **Material adapter:** Follow the [material training guide](docs/training.md#material-adapter-training)
-  to encode paired-image data and launch the Qwen-Image-2.1 adapter trainer.
 
 ## Acknowledgments
 
