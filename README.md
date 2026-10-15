@@ -1,146 +1,154 @@
-<h1 align="center">SUPRA-Tex: super-aligned 3D texture generation</h1>
+<h1 align="center">SUPRA-Tex: 3D Generation with Super-Aligned Texture</h1>
+
 <p align="center">
-  <a href="https://github.com/Supra-3D/SUPRA-Tex">Code</a> ·
-  <a href="#quick-start">Quick Start</a> ·
-  <a href="#models">Models</a> ·
-  <a href="docs/method.md">Method</a> ·
-  <a href="#documentation">Documentation</a> ·
-  <a href="#citation">Citation</a>
+  Chen Yang · Jiemin Fang · Fanpeng Meng · Zihao Huang<br>
+  Jichen Pang · Guanjun Wu · Zhikuan Bao · Qi Tian
 </p>
 
 <p align="center">
-  <b>Trained only on open-source data, SUPRA-Tex achieves performance<br>
-  comparable to or better than commercial systems.</b>
+  <a href="https://supra-3d.github.io/supratex/"><img src="https://img.shields.io/badge/Project-Page-blue" alt="Project page"></a>
+  <a href="https://huggingface.co/spaces/UniLat3D/Supra-Tex"><img src="https://img.shields.io/badge/Demo-Hugging_Face-blueviolet" alt="Online demo"></a>
+  <a href="https://huggingface.co/supra3d/supra-tex"><img src="https://img.shields.io/badge/Models-Hugging_Face-yellow" alt="Model weights"></a>
+  <a href="LICENSE"><img src="https://img.shields.io/badge/License-MIT-green" alt="Source license"></a>
 </p>
 
 https://github.com/user-attachments/assets/208ede7e-6db7-4f23-8deb-61d2ac5541f5
 
-<p align="center"><a href="assets/supratex_fighter_typography.mp4">▶ Watch the SUPRA-Tex demo</a></p>
+**SUPRA-Tex** generates textured 3D assets from a single image, preserving details
+such as lettering, patterns, and material boundaries. It predicts PBR materials
+in the reference view, encodes them as surface-aligned 3D observations, and
+completes unseen regions with an **Interleaved Flow Transformer**. The output is
+a relightable GLB with base color, metallic, and roughness textures.
 
-**SUPRA-Tex** turns a single RGB image into a textured 3D mesh by combining
-geometry generation, material prediction, and surface-aligned texture
-completion. The output is a relightable GLB with base color, metallic, and
-roughness maps.
+- **Image-aligned textures.** Use visible surface observations to guide 3D
+  material generation and retain the details of the input image.
+- **Complete PBR assets.** Generate materials for unseen surfaces and export
+  textures that support rendering under new lighting.
+- **Image-to-3D and mesh texturing.** Generate an asset from an image, or texture
+  an existing mesh with matching camera and material observations.
 
-## Highlights
+Learn more in the [method overview](docs/method.md), or try the
+[online demo](https://huggingface.co/spaces/UniLat3D/Supra-Tex).
 
-- **Trained only on open-source data.** Achieves performance comparable to or
-  better than commercial systems.
-- **RGB to textured mesh.** Generate geometry and PBR materials from a single
-  reference image with the complete image-to-3D pipeline.
-- **Surface alignment.** Project reference-view materials onto the mesh and
-  encode them in the same 3D latent space used for generation.
-- **Observation-guided completion.** Keep observed material latents as fixed
-  anchors while the Interleaved Flow Transformer completes the surface.
-- **Relightable assets.** Generate PBR materials that respond to new lighting.
+## Installation
 
-See the [method overview](docs/method.md) for the three-stage pipeline.
+Use **Linux** with an **NVIDIA GPU** and **CUDA 12.4**. The setup below creates a
+Python 3.10 environment and installs PyTorch 2.6.0 and the required CUDA extensions.
+See [GPU compatibility](docs/gpu_compatibility.md) for tested hardware and memory options.
 
-## Quick Start
-
-Use Linux x86_64, an NVIDIA CUDA GPU, Python 3.10, a CUDA 12.4 toolkit (`nvcc`),
-Git and a C++ compiler. All project runtime source is included in this
-checkout. The installer creates a separate environment and obtains the
-pinned public Python/CUDA dependencies; no sibling project checkout is needed.
-
-### RGB to textured mesh
-
-Run from this source directory. The project models live under `completion/`
-and `material/` in [supra3d/supra-tex](https://huggingface.co/supra3d/supra-tex).
-The preparation script also obtains the required external base models and
-assembles the geometry/DINO and NAF layouts automatically:
+### 1. Clone the repository
 
 ```bash
-python3.10 scripts/install_runtime.py
-source .venv/bin/activate
-
-python scripts/prepare_models.py --repo supra3d/supra-tex
-python scripts/check_runtime.py
-python scripts/run_example.py --output outputs/pitcher_plant.glb --attention sdpa
+git clone https://github.com/Supra-3D/SUPRA-Tex.git
+cd SUPRA-Tex
 ```
 
-The default [pitcher plant](assets/pitcher_plant.png) includes foreground alpha.
-DINOv3 is a required upstream model with publisher-controlled access; arrange
-access in your own Hugging Face account before preparation, or supply an
-existing local copy with `--dino`. For an opaque RGB input, prepare with
-`--with-rmbg` (RMBG-2 also requires upstream access), then pass
-`--input path/to/image.png` to `run_example.py`. The runner detects foreground
-alpha and requires RMBG for an opaque image.
-
-Both installation and preparation support `--dry-run`. See the
-[source setup guide](docs/quickstart.md) for existing local weights, download
-recovery, and what each validation step establishes. The underlying
-[infer.py interface](docs/end_to_end.md) remains available for individual paths
-and advanced options.
-
-Attention is selected automatically for A100, RTX, and Hopper GPUs. GPUs with
-24 GB or less enable CPU offload by default; use `--low-vram` to enable it
-explicitly. See [GPU compatibility](docs/gpu_compatibility.md) for the memory
-tradeoffs and current validation status.
-
-<details>
-<summary><b>Texture an existing mesh</b></summary>
-
-For an existing mesh, prepare its camera and material observations following
-[3D texturing](docs/texturing.md), then run:
+### 2. Create the environment and install dependencies
 
 ```bash
-python texturing.py \
-  --input-dir inputs/object \
-  --output outputs/object.glb \
-  --pretrained /path/to/completion \
-  --trellis-root /path/to/TRELLIS.2-4B
+conda create -n supra-tex python=3.10 -y
+conda activate supra-tex
+python scripts/install_runtime.py --conda
 ```
 
-</details>
+For CUDA setup and manual installation, see the [installation guide](docs/installation.md).
 
-## Models
+## Pretrained Models
 
-| Model | Contents | License |
+Our checkpoints are available on [Hugging Face](https://huggingface.co/supra3d/supra-tex).
+
+| Model | Parameters | Download |
 | --- | --- | --- |
-| [SUPRA-Tex 3D Completion](https://huggingface.co/supra3d/supra-tex/tree/main/completion) | Full 2.1B-parameter completion model | [MIT](LICENSE) |
-| [SUPRA-Tex Material Adapter](https://huggingface.co/supra3d/supra-tex/tree/main/material) | 33.6M trainable parameters for Qwen-Image-2.1 | [Qwen Research License](LICENSE) |
+| SUPRA-Tex 3D Completion | 2.1B | [completion](https://huggingface.co/supra3d/supra-tex/tree/main/completion) |
+| SUPRA-Tex Material Adapter | 33.6M trainable | [material](https://huggingface.co/supra3d/supra-tex/tree/main/material) |
 
-See [Weights](docs/weights.md) for the repository layout and required external
-models. The material adapter requires
-the full Qwen-Image-2.1 base; completion requires the pretrained sparse VAEs.
+The image-to-3D pipeline also uses Meta's
+[DINOv3](https://huggingface.co/facebook/dinov3-vitl16-pretrain-lvd1689m).
+To download this upstream dependency, request access on its model page and log in:
 
-**Built with Qwen.** The material adapter is released for non-commercial
-research and evaluation under the Qwen agreement.
+```bash
+hf auth login
+```
 
-## Documentation
+The inference command below downloads the required models on first use and
+reuses them on later runs. Both inference entrypoints use the release's
+[`pipeline.json`](pipeline.json) for model configuration.
+See [model weights](docs/weights.md) for the complete dependency list and licenses.
 
-| Task | Guide |
-| --- | --- |
-| Set up the environment | [Installation](docs/installation.md) |
-| Configure A100 or 24 GB GPUs | [GPU compatibility](docs/gpu_compatibility.md) |
-| Generate a textured mesh from an image | [RGB-to-textured-mesh inference](docs/end_to_end.md) |
-| Texture an existing mesh | [3D texturing](docs/texturing.md) |
-| Predict reference-view materials | [Material frontend](docs/frontend.md) |
-| Add a generated back observation | [Dual-view inference](docs/dual_view.md) |
-| Train the completion model | [Training](docs/training.md) |
+## Usage
+
+### Image to 3D
+
+Generate a textured asset from the bundled [example image](assets/pitcher_plant.png):
+
+```bash
+python infer.py --pipeline supra3d/supra-tex \
+  --input assets/pitcher_plant.png \
+  --output outputs/pitcher_plant.glb
+```
+
+Replace `--input` with your image and choose a new `--output` path. The command
+exports the GLB and saves intermediate material maps in a sibling work directory.
+More [example images](assets/README.md) are included in `assets/`.
+
+Images with foreground alpha, including the bundled example, use that alpha
+automatically. For images without foreground alpha, the pipeline downloads
+[RMBG-2.0](https://huggingface.co/briaai/RMBG-2.0) for background removal;
+request access to that model before running on these images.
+
+Add `--low-vram` to enable CPU offload. See the
+[inference guide](docs/end_to_end.md) for further options, or the
+[setup guide](docs/quickstart.md) to download models ahead of time and run offline.
+
+### Texture an existing mesh
+
+Prepare a mesh, its camera, and reference-view material maps as described in
+[the texturing guide](docs/texturing.md), then run:
+
+```bash
+python texturing.py --pipeline supra3d/supra-tex \
+  --input-dir inputs/object \
+  --output outputs/textured_object.glb
+```
+
+This entrypoint loads the completion model and TRELLIS.2 VAEs. The
+[material frontend](docs/frontend.md) can prepare the reference-view material maps.
+For an additional back-view observation, see [dual-view texturing](docs/dual_view.md).
+
+## Training
+
+We provide training code for the 3D completion model and the Qwen material adapter.
+
+- **3D completion:** Follow the [training guide](docs/training.md) to prepare
+  aligned shape, material, and partial-observation latents and configure a run.
+- **Material adapter:** Follow the [material training guide](docs/training.md#material-adapter-training)
+  to encode paired-image data and launch the Qwen-Image-2.1 adapter trainer.
+
+## Acknowledgments
+
+Our implementation builds on [TRELLIS.2](https://github.com/microsoft/TRELLIS.2)
+and [Pixal3D](https://github.com/TencentARC/Pixal3D). We also thank the authors of
+Qwen-Image, FireRed-Image-Edit, MoGe, NAF, CuMesh, FlexGEMM, and nvdiffrast for
+making their work available.
+
+## License
+
+Original SUPRA-Tex source and the 3D completion weights are released under the
+[MIT License](LICENSE). **Built with Qwen:** the material adapter uses the
+Qwen Research License for non-commercial research and evaluation. Third-party
+code and external models retain their respective licenses; see
+[third-party notices](LICENSE) and [model licenses](docs/weights.md).
 
 ## Citation
 
-Temporary placeholder: [GaussianObject](https://github.com/chensjtu/GaussianObject).
-The citation for **SUPRA-Tex: super-aligned 3D texture generation** will replace this entry.
+If you find this work useful for your research, please cite:
 
 ```bibtex
-@article{yang2024gaussianobject,
-  title   = {GaussianObject: High-Quality 3D Object Reconstruction from Four Views with Gaussian Splatting},
-  author  = {Chen Yang and Sikuang Li and Jiemin Fang and Ruofan Liang and
-             Lingxi Xie and Xiaopeng Zhang and Wei Shen and Qi Tian},
-  journal = {ACM Transactions on Graphics},
-  year    = {2024}
+@article{yang2026supratex,
+  title   = {{SUPRA-Tex}: 3D Generation with Super-Aligned Texture},
+  author  = {Yang, Chen and Fang, Jiemin and Meng, Fanpeng and Huang, Zihao
+             and Pang, Jichen and Wu, Guanjun and Bao, Zhikuan and Tian, Qi},
+  journal = {Tech report},
+  year    = {2026}
 }
 ```
-
-## License and Acknowledgments
-
-Original SUPRA-Tex source and the 3D completion weights use the
-[MIT License](LICENSE). The material adapter uses the Qwen Research License
-listed above. Incorporated third-party code and external models retain their
-own terms; see [Third-party notices](LICENSE).
-
-We thank the contributors to TRELLIS/TRELLIS.2, Qwen, FireRed-Image-Edit,
-MoGe, and the geometry and rendering libraries used by this project.
