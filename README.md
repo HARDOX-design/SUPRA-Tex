@@ -1,5 +1,6 @@
-<h1 align="center">Supra-Tex: super-aligned 3D texture generation</h1>
+<h1 align="center">SUPRA-Tex: super-aligned 3D texture generation</h1>
 <p align="center">
+  <a href="https://github.com/Supra-3D/SUPRA-Tex">Code</a> ·
   <a href="#quick-start">Quick Start</a> ·
   <a href="#models">Models</a> ·
   <a href="docs/method.md">Method</a> ·
@@ -8,15 +9,15 @@
 </p>
 
 <p align="center">
-  <b>Trained only on open-source data, Supra-Tex achieves performance<br>
+  <b>Trained only on open-source data, SUPRA-Tex achieves performance<br>
   comparable to or better than commercial systems.</b>
 </p>
 
 https://github.com/user-attachments/assets/208ede7e-6db7-4f23-8deb-61d2ac5541f5
 
-<p align="center"><a href="assets/supratex_fighter_typography.mp4">▶ Watch the Supra-Tex demo</a></p>
+<p align="center"><a href="assets/supratex_fighter_typography.mp4">▶ Watch the SUPRA-Tex demo</a></p>
 
-**Supra-Tex** turns a single RGB image into a textured 3D mesh by combining
+**SUPRA-Tex** turns a single RGB image into a textured 3D mesh by combining
 geometry generation, material prediction, and surface-aligned texture
 completion. The output is a relightable GLB with base color, metallic, and
 roughness maps.
@@ -97,8 +98,8 @@ python texturing.py \
 
 | Model | Contents | License |
 | --- | --- | --- |
-| [Supra-Tex 3D Completion](https://huggingface.co/supra3d/supra-tex/tree/main/completion) | Full 2.1B-parameter completion model | [MIT](LICENSE) |
-| [Supra-Tex Material Adapter](https://huggingface.co/supra3d/supra-tex/tree/main/material) | 33.6M trainable parameters for Qwen-Image-2.1 | [Qwen Research License](LICENSE) |
+| [SUPRA-Tex 3D Completion](https://huggingface.co/supra3d/supra-tex/tree/main/completion) | Full 2.1B-parameter completion model | [MIT](LICENSE) |
+| [SUPRA-Tex Material Adapter](https://huggingface.co/supra3d/supra-tex/tree/main/material) | 33.6M trainable parameters for Qwen-Image-2.1 | [Qwen Research License](LICENSE) |
 
 See [Weights](docs/weights.md) for the repository layout and required external
 models. The material adapter requires
@@ -122,7 +123,7 @@ research and evaluation under the Qwen agreement.
 ## Citation
 
 Temporary placeholder: [GaussianObject](https://github.com/chensjtu/GaussianObject).
-The citation for **Supra-Tex: super-aligned 3D texture generation** will replace this entry.
+The citation for **SUPRA-Tex: super-aligned 3D texture generation** will replace this entry.
 
 ```bibtex
 @article{yang2024gaussianobject,
@@ -136,7 +137,7 @@ The citation for **Supra-Tex: super-aligned 3D texture generation** will replace
 
 ## License and Acknowledgments
 
-Original Supra-Tex source and the 3D completion weights use the
+Original SUPRA-Tex source and the 3D completion weights use the
 [MIT License](LICENSE). The material adapter uses the Qwen Research License
 listed above. Incorporated third-party code and external models retain their
 own terms; see [Third-party notices](LICENSE).
