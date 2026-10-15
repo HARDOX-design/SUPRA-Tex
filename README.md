@@ -12,9 +12,9 @@
   comparable to or better than commercial systems.</b>
 </p>
 
-https://github.com/user-attachments/assets/2db722b0-93b3-4e13-82d2-b04806786ac4
+https://github.com/user-attachments/assets/208ede7e-6db7-4f23-8deb-61d2ac5541f5
 
-<p align="center"><a href="assets/supratex_fighter_typography.mp4">▶ Watch the Supra-Tex demo · 64 seconds</a></p>
+<p align="center"><a href="assets/supratex_fighter_typography.mp4">▶ Watch the Supra-Tex demo</a></p>
 
 **Supra-Tex** turns a single RGB image into a textured 3D mesh by combining
 geometry generation, material prediction, and surface-aligned texture
