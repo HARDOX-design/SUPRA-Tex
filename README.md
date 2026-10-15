@@ -12,7 +12,7 @@
   comparable to or better than commercial systems.</b>
 </p>
 
-[![Supra-Tex output / input image — watch the main demo](assets/supratex_fighter_preview.png)](assets/supratex_fighter_typography.mp4)
+https://github.com/user-attachments/assets/2db722b0-93b3-4e13-82d2-b04806786ac4
 
 <p align="center"><a href="assets/supratex_fighter_typography.mp4">▶ Watch the Supra-Tex demo · 64 seconds</a></p>
 
