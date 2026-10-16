@@ -2,7 +2,7 @@
 
 <p align="center">
   <a href="https://supra-3d.github.io/supratex/"><img src="https://img.shields.io/badge/Project-Page-blue" alt="Project page"></a>
-  <img src="https://img.shields.io/badge/Paper-arXiv-b31b1b" alt="arXiv paper" title="arXiv link coming soon">
+  <a href="https://arxiv.org/abs/2610.22352"><img src="https://img.shields.io/badge/Paper-arXiv-b31b1b" alt="arXiv paper"></a>
   <a href="https://huggingface.co/spaces/UniLat3D/Supra-Tex"><img src="https://img.shields.io/badge/Demo-Hugging_Face-blueviolet" alt="Online demo"></a>
   <a href="https://huggingface.co/supra3d/supra-tex"><img src="https://img.shields.io/badge/Models-Hugging_Face-yellow" alt="Model weights"></a>
   <a href="#license"><img src="https://img.shields.io/badge/License-MIT-green" alt="Source license"></a>
@@ -84,7 +84,8 @@ If you find this work useful for your research, please cite:
   title   = {{SUPRA-Tex}: 3D Generation with Super-Aligned Texture},
   author  = {Yang, Chen and Fang, Jiemin and Meng, Fanpeng and Huang, Zihao
              and Pang, Jichen and Wu, Guanjun and Bao, Zhikuan and Tian, Qi},
-  journal = {Tech report},
-  year    = {2026}
+  journal = {arXiv preprint arXiv:2610.22352},
+  year    = {2026},
+  url     = {https://arxiv.org/abs/2610.22352}
 }
 ```
