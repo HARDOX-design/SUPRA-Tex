@@ -52,7 +52,7 @@ Learn more on the [project page](https://supra-3d.github.io/supratex/), or try t
 
 ## Pretrained Models
 
-Our checkpoints are available on [Hugging Face](https://huggingface.co/supra3d/supra-tex).
+Our models are available on [Hugging Face](https://huggingface.co/supra3d/supra-tex).
 
 | Model | Parameters | Download |
 | --- | --- | --- |
