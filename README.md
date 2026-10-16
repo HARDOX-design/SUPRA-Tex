@@ -54,6 +54,8 @@ Learn more on the [project page](https://supra-3d.github.io/supratex/), or try t
 
 Our models are available on [Hugging Face](https://huggingface.co/supra3d/supra-tex).
 
+> **Note:** We are actively working to resolve model deployment issues and will make the model available for use as soon as they are resolved; results from the current version may be inconsistent and do not reflect the final model quality.
+
 | Model | Parameters | Download |
 | --- | --- | --- |
 | SUPRA-Tex 3D Completion | 2.1B | [completion](https://huggingface.co/supra3d/supra-tex/tree/main/completion) |
