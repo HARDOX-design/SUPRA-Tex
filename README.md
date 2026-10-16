@@ -28,7 +28,7 @@
   <sup>✉</sup>Corresponding authors
 </p>
 
-https://github.com/user-attachments/assets/f3a44185-9f29-4f1f-bd1e-a14a44f0a991
+https://github.com/user-attachments/assets/04465bb8-564a-45b9-bc8b-77d6b3699d82
 
 **SUPRA-Tex** generates textured 3D assets from a single image, preserving details
 such as lettering, patterns, and material boundaries. It predicts PBR materials
