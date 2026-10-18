@@ -19,7 +19,7 @@ dependencies = [
 frontend = ["transformers==4.57.3", "diffusers==0.37.1", "accelerate", "requests", "timm"]
 
 [tool.setuptools]
-license-files = ["LICENSE"]
+license-files = ["LICENSE", "THIRD_PARTY_NOTICES.md"]
 
 [tool.setuptools.packages.find]
 include = ["supratex*"]

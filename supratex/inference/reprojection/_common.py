@@ -10,8 +10,10 @@ from typing import Any, Mapping
 
 OUTSIDE_COLOR_MAX_ABS = 5 / 255.0
 REPLAY_MAX_ABS = 1e-5
-TRAIN = tuple((x / 4, y / 4) for x in range(4) for y in range(4))
-HELD = ((.125, .375), (.375, .625), (.875, .125))
+# Validation render phases, as sub-pixel camera offsets: a 4x4 grid plus three
+# off-grid points. Both operators render every candidate at all nineteen.
+GRID_PHASES = tuple((x / 4, y / 4) for x in range(4) for y in range(4))
+OFFGRID_PHASES = ((.125, .375), (.375, .625), (.875, .125))
 IDENTITY_GATES = (
     "materials_exact", "mesh_structure_exact", "node_structure_exact",
     "nonbase_buffer_views_exact",
@@ -80,14 +82,14 @@ def validate_candidate(directory: Path, *, continuous: bool) -> dict[str, Any]:
     if not all(gates.get("nonbase_identity", {}).get(key) is True for key in IDENTITY_GATES):
         raise ValueError("candidate lacks non-base preservation gates")
     if continuous:
-        if not all(gates.get(key) is True for key in ("UV_covered_exact", "B_active_exact", "blocked_exact", "alpha_exact")):
+        if not all(gates.get(key) is True for key in ("UV_covered_exact", "project_active_exact", "blocked_exact", "alpha_exact")):
             raise ValueError("continuous candidate lacks atlas preservation gates")
     elif receipt.get("atlas", {}).get("alpha_exact") is not True:
         raise ValueError("projection candidate did not preserve alpha")
     candidate = directory / "candidate" / "mesh.glb"
     if Path(receipt.get("candidate_glb", "")).resolve() != candidate.resolve() or not candidate.is_file():
         raise ValueError("candidate mesh binding is missing or incorrect")
-    for split, expected in (("train", TRAIN), ("heldout", HELD)):
+    for split, expected in (("grid", GRID_PHASES), ("offgrid", OFFGRID_PHASES)):
         rows = receipt.get("phase_results", {}).get(split, [])
         if len(rows) != len(expected):
             raise ValueError(f"incomplete {split} phase coverage")
@@ -107,7 +109,7 @@ def validate_candidate(directory: Path, *, continuous: bool) -> dict[str, Any]:
             if read_json(folder / "PHASE_RECEIPT.json") != row:
                 raise ValueError("phase detail differs from candidate receipt")
             evidence = row.get("evidence", {})
-            names = ("repair", "B") if continuous else ("candidate", "baseline")
+            names = ("repair", "project") if continuous else ("candidate", "baseline")
             if set(evidence) != set(names):
                 raise ValueError("phase lacks its two rendered evidence arrays")
             for name in names:

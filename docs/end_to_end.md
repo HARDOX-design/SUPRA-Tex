@@ -8,9 +8,7 @@ completion, and GLB export. Install the runtime with the
 ## Run from a model release
 
 ```bash
-python infer.py --pipeline supra3d/supra-tex \
-  --input assets/pitcher_plant.png \
-  --output outputs/pitcher_plant.glb
+python infer.py --pipeline supra3d/supra-tex --output outputs/spiny_whelk_shell.glb
 ```
 
 `--pipeline` accepts a model repository ID/URL, a local model repository directory,
@@ -19,6 +17,9 @@ all required models under `ckpts/ready/`, and uses the manifest's inference
 defaults. Use `--pipeline-revision` to select a Hub snapshot and `--models-dir`
 to select another prepared-model directory.
 
+Without `--input`, `infer.py` uses the bundled `assets/spiny_whelk_shell.png`
+(`assets/cinema_signage.png` with `--dual-view`); pass `--input path/to/image.png`
+for your own image.
 The bundled example has foreground alpha, which is reused automatically. For
 an opaque RGB image, the pipeline also prepares RMBG-2. DINOv3 and RMBG-2 require
 upstream access approval; see [model preparation](quickstart.md#2-prepare-the-models).
@@ -33,11 +34,8 @@ directory. Existing outputs are never overwritten.
 After the [preparation step](quickstart.md#2-prepare-the-models):
 
 ```bash
-python scripts/check_runtime.py --config ckpts/ready/models.json
-python scripts/run_example.py \
-  --config ckpts/ready/models.json \
-  --input assets/pitcher_plant.png \
-  --output outputs/pitcher_plant.glb
+python scripts/check_runtime.py
+python scripts/run_example.py --output outputs/spiny_whelk_shell.glb
 ```
 
 The runner supplies local model/runtime paths, configures the NAF cache, and
@@ -65,6 +63,21 @@ overridden through this launcher. Use `infer.py` directly for those changes.
 - `--gutter` adds one texel of base-color padding outside UV charts. It is
   disabled by default and preserves covered texels, alpha, metallic/roughness,
   geometry, and UVs.
+- Floater removal is on by default: before completion, disconnected geometry
+  pieces that project mostly outside the image foreground are dropped, and a
+  `Floaters:` line reports the count. `--no-remove-floaters` keeps them.
+  Pieces hidden behind the object and extra geometry attached to it are kept;
+  see [texturing](texturing.md#floating-geometry). The saved `geometry.pt` stays
+  unchanged, and the dual-view back view is rendered from it.
+- `--refine` further refines the visible texture after export and aligns it
+  with the input image, keeping very small text and intricate detail sharp. It is
+  off by default because it adds about two minutes on an RTX 3090. It needs the
+  default 4096 PNG atlas, works with any face target and with `--gutter` (which
+  then uses the observation-guided gutter). `--dual-view` always refines both
+  views, so it implies `--refine`. If refinement fails, it is skipped with a
+  warning and the unrefined result is written. Its receipts are under
+  `<work-dir>/refine`.
+  See [texturing](texturing.md#texture-refinement).
 
 The Qwen material predictor uses 1024-square inputs, Torch attention, and a
 single endpoint prediction. It produces albedo and metallic/roughness maps;
@@ -81,8 +94,7 @@ To use the default prepared layout without `--pipeline` or the launcher:
 
 ```bash
 TORCH_HOME="$PWD/ckpts/ready/torch" python infer.py \
-  --input assets/pitcher_plant.png --use-input-alpha \
-  --output outputs/object.glb \
+  --output outputs/spiny_whelk_shell.glb \
   --moge-model ckpts/ready/external/moge2 \
   --geometry-package deployment/runtime/geometry \
   --geometry-model ckpts/ready/geometry \
@@ -97,8 +109,7 @@ Without `--pipeline`, `--moge-model`, `--geometry-package`, and
 `pipeline.json`, model files, and local DINOv3 directory. Configure its local
 NAF cache as shown above. If preparation used local overrides or another output
 directory, use the corresponding paths in `models.json`.
-For opaque RGB input, replace `--use-input-alpha` with
-`--rmbg-model /path/to/RMBG-2.0`.
+For opaque RGB input, add `--input` and `--rmbg-model /path/to/RMBG-2.0`.
 
 Completion and material bundles can be local directories or Hub repository
 IDs. `--revision`, `--geometry-revision`, and `--material-revision` select their

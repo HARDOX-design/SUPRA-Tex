@@ -25,8 +25,6 @@ from urllib.request import urlopen
 
 ROOT = Path(__file__).resolve().parents[1]
 PROJECT_REPO = "supra3d/supra-tex"
-COMPLETION_PATTERNS = ["config.json", "partial_normalization.json", "*.safetensors",
-                       "*.safetensors.index.json", "LICENSE*", "README.md"]
 MATERIAL_PATTERNS = ["adapter_config.json", "adapter_model.safetensors", "LICENSE*", "Notice", "README.md"]
 GEOMETRY_KEYS = ("sparse_structure_flow_model", "sparse_structure_decoder",
                  "shape_slat_flow_model_512", "shape_slat_flow_model_1024", "shape_slat_decoder")
@@ -38,6 +36,14 @@ MARKER = ".prepare-models.json"
 _spec = importlib.util.spec_from_file_location("_supratex_pipeline_config", ROOT / "supratex/pipeline_config.py")
 _pipeline = importlib.util.module_from_spec(_spec)
 _spec.loader.exec_module(_pipeline)
+_weights_spec = importlib.util.spec_from_file_location("_supratex_prepare_weights", ROOT / "supratex/weights.py")
+_weights = importlib.util.module_from_spec(_weights_spec)
+_weights_spec.loader.exec_module(_weights)
+DEFAULT_COMPLETION_CHECKPOINT = _weights.DEFAULT_COMPLETION_CHECKPOINT
+# The release keeps an older sharded model beside the default checkpoint; fetch
+# only the default weights.
+COMPLETION_PATTERNS = ["config.json", "partial_normalization.json", DEFAULT_COMPLETION_CHECKPOINT,
+                       "LICENSE*", "README.md"]
 relative_name = _pipeline.relative_name
 model_source = _pipeline.model_source
 
@@ -180,19 +186,22 @@ def check_safe_weights(directory: Path, single: str = "model.safetensors") -> Pa
     return require_file(weights)
 
 
+def completion_checkpoint(directory: Path) -> Path:
+    """Prefer the default completion weights; fall back to model.safetensors or its shards."""
+    default = directory / DEFAULT_COMPLETION_CHECKPOINT
+    return default if default.is_file() else check_safe_weights(directory)
+
+
 def validate_inputs(paths: dict[str, Path]) -> tuple[dict, Path]:
     # Load the path-only helper directly: package __init__ imports GPU-facing
     # modules, and resolve_completion_artifacts performs deeper ABI validation.
-    spec = importlib.util.spec_from_file_location("_supratex_prepare_weights", ROOT / "supratex/weights.py")
-    module = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(module)
     for key in ("completion", "material"):
-        module.resolve_model_dir(paths[key], local_files_only=True)
+        _weights.resolve_model_dir(paths[key], local_files_only=True)
     completion = json.loads(require_file(paths["completion"] / "config.json").read_text())
     if completion.get("format") != "supratex_completion" or completion.get("schema_version") != 1:
         raise ValueError("completion requires the standalone Supra-Tex config.json (schema_version 1)")
     require_file(paths["completion"] / "partial_normalization.json")
-    checkpoint = check_safe_weights(paths["completion"])
+    checkpoint = completion_checkpoint(paths["completion"])
     adapter = json.loads(require_file(paths["material"] / "adapter_config.json").read_text())
     if adapter.get("format") != "supratex_qwen_material_adapter" or adapter.get("weight_file") != "adapter_model.safetensors":
         raise ValueError("material requires the standalone Supra-Tex adapter_config.json and adapter_model.safetensors")
@@ -214,7 +223,9 @@ def validate_inputs(paths: dict[str, Path]) -> tuple[dict, Path]:
     require_file(paths["dino"] / "config.json")
     check_safe_weights(paths["dino"])
     if "rmbg2" in paths:
-        for name in ("config.json", "model.safetensors", "preprocessor_config.json", "BiRefNet_config.py", "birefnet.py"):
+        # The foreground adapter normalizes images itself, so RMBG-2.0 and the
+        # public BiRefNet release share this layout without an image processor.
+        for name in ("config.json", "model.safetensors", "BiRefNet_config.py", "birefnet.py"):
             require_file(paths["rmbg2"] / name)
     paths["moge2"] = require_file(paths["moge2"] / "model.pt" if paths["moge2"].is_dir() else paths["moge2"])
     paths["naf"] = require_file(paths["naf"] / "naf_release.pth" if paths["naf"].is_dir() else paths["naf"])

@@ -1,14 +1,21 @@
 """Project observed albedo at UV texel centres with measured 19-phase gates.
+
+Support is the union of atlas texels touched by the sixteen grid phases,
+intersected with UV-covered texel centres whose source projection lands on
+hard-trusted observation pixels (alpha >= 254, eroded by two pixels). Bilinear
+atlas taps of pixels near untrusted observation regions are blocked. Each kept
+texel T0 becomes T0 + s * (source - T0), where source is the bilinear predicted
+albedo at the texel centre's projection and s is the observation trust. The
+candidate GLB is then re-rendered at all grid and off-grid phases.
 """
 from __future__ import annotations
 import argparse, copy, io, json, os, sys, time
 from pathlib import Path
-from ._common import OUTSIDE_COLOR_MAX_ABS, outside_color_passes, load_renderer, bind_file
+from ._common import GRID_PHASES, OFFGRID_PHASES, OUTSIDE_COLOR_MAX_ABS, outside_color_passes, load_renderer, bind_file
 from . import _glb as fixed
+SCHEMA = 'supratex.reprojection.project'
 SIZE = 4096
 RES = 1024
-TRAIN = tuple(((x / 4, y / 4) for x in range(4) for y in range(4)))
-HELD = ((0.125, 0.375), (0.375, 0.625), (0.875, 0.125))
 
 def put(p, x):
     if p.exists():
@@ -17,21 +24,31 @@ def put(p, x):
 
 def main():
     ap = argparse.ArgumentParser(description=__doc__)
-    ap.add_argument('--arm', choices=('B',), required=True)
     ap.add_argument('--baseline-glb', type=Path, required=True)
     ap.add_argument('--source-albedo', type=Path, required=True)
     ap.add_argument('--source-rgba', type=Path, required=True)
     ap.add_argument('--camera', type=Path, required=True)
-    ap.add_argument('--evaluator', type=Path, required=True)
+    ap.add_argument('--renderer', type=Path, required=True)
     ap.add_argument('--output', type=Path, required=True)
     a = ap.parse_args()
     if a.output.exists():
         raise FileExistsError(a.output)
-    for p in (a.baseline_glb, a.source_albedo, a.source_rgba, a.camera, a.evaluator):
+    for p in (a.baseline_glb, a.source_albedo, a.source_rgba, a.camera, a.renderer):
         if not p.is_file():
             raise FileNotFoundError(p)
     a.output.mkdir(parents=True)
-    put(a.output / 'PLAN.json', {'arm': a.arm, 'baseline_glb': str(a.baseline_glb.absolute()), 'source_albedo': str(a.source_albedo.absolute()), 'source_rgba': str(a.source_rgba.absolute()), 'camera': str(a.camera.absolute()), 'evaluator': str(a.evaluator.absolute()), 'size': SIZE, 'resolution': RES, 'train_phases': TRAIN, 'heldout_phases': HELD, 'source': 'predicted albedo only; no GT read', 'support': 'common sixteen-phase union, intersected with covered source-hard-trusted UV-triangle centres; alpha>=254 source support eroded 2 pixels; two-pixel unsafe-surface footprint blacklist', 'B': 'atlas-centre UV-triangle final-surface projection then bilinear source albedo sample mixed as T0+s*(source-T0)', 'validation': 'actual GLB rerender at 16 train + 3 heldout phases'})
+    put(a.output / 'PLAN.json', {
+        'schema': SCHEMA,
+        'baseline_glb': str(a.baseline_glb.absolute()),
+        'source_albedo': str(a.source_albedo.absolute()),
+        'source_rgba': str(a.source_rgba.absolute()),
+        'camera': str(a.camera.absolute()),
+        'renderer': str(a.renderer.absolute()),
+        'size': SIZE,
+        'resolution': RES,
+        'grid_phases': GRID_PHASES,
+        'offgrid_phases': OFFGRID_PHASES,
+    })
     os.environ['FLEX_GEMM_USE_AUTOTUNE_CACHE'] = '0'
     os.environ['FLEX_GEMM_AUTOSAVE_AUTOTUNE_CACHE'] = '0'
     import cv2, numpy as np, torch
@@ -39,7 +56,7 @@ def main():
     torch.backends.cuda.matmul.allow_tf32 = False
     torch.manual_seed(42)
     began = time.monotonic()
-    rm = load_renderer(a.evaluator)
+    rm = load_renderer(a.renderer)
     rt = rm._runtime_imports()
     dr = rt['dr']
     camera = json.loads(a.camera.read_text())
@@ -81,7 +98,7 @@ def main():
         return (ex, inn)
     rm._exported_glb_camera = pc
 
-    def op(phase, need_all=False):
+    def op(phase):
         cam = copy.deepcopy(camera)
         cam['front_atlas_phase'] = phase
         (ee, kk) = pc(cam, 'cuda', rt)
@@ -124,8 +141,17 @@ def main():
         strength = rt['F'].grid_sample(trust_t, (tsuv * 2 - 1).reshape(1, 1, -1, 2), align_corners=False, padding_mode='zeros')[0, 0, 0]
         screen = np.zeros(RES * RES, bool)
         screen[rows.cpu().numpy()] = True
-        return {'phase': phase, 'idx': idx, 'w': w, 'outside': outside, 'target': target, 'strength': strength, 'rows': rows, 'screen': screen.reshape(RES, RES), 'uvs': uvs, 'points': points, 'rast': rast, 'trusted': trusted, 'rowsall': rowsall, 'suv': suv}
-    ops = [op(p) for p in TRAIN]
+        return {
+            'phase': phase,
+            'idx': idx,
+            'w': w,
+            'outside': outside,
+            'target': target,
+            'strength': strength,
+            'rows': rows,
+            'screen': screen.reshape(RES, RES),
+        }
+    ops = [op(p) for p in GRID_PHASES]
     active = torch.unique(torch.cat([o['idx'].reshape(-1) for o in ops]))
     (rastuv, _) = dr.rasterize(dr.RasterizeCudaContext(device='cuda'), torch.cat((uv * 2 - 1, torch.zeros_like(uv[:, :1]), torch.ones_like(uv[:, :1])), 1)[None], faces, (SIZE, SIZE))
     (pxyz, _) = dr.interpolate(native[None], rastuv, faces)
@@ -144,7 +170,10 @@ def main():
     centre_suv = centre_suv[centre_keep]
     look = torch.full((SIZE * SIZE,), -1, dtype=torch.long, device='cuda')
     look[active] = torch.arange(len(active), device='cuda')
-    outids = torch.unique(torch.cat([o['outside'].reshape(-1) for o in ops if o['outside'].numel()])) if any((o['outside'].numel() for o in ops)) else torch.empty(0, dtype=torch.long, device='cuda')
+    if any(o['outside'].numel() for o in ops):
+        outids = torch.unique(torch.cat([o['outside'].reshape(-1) for o in ops if o['outside'].numel()]))
+    else:
+        outids = torch.empty(0, dtype=torch.long, device='cuda')
     blocked = torch.zeros(len(active), dtype=torch.bool, device='cuda')
     if len(outids):
         where = torch.searchsorted(active, outids)
@@ -201,23 +230,50 @@ def main():
         target = np.zeros_like(ci)
         target.reshape(-1, 3)[o['rows'].cpu().numpy()] = o['target'].cpu().numpy()
         sel = o['screen'] & cm
-        Image.fromarray((target * 255 + 0.5).astype(np.uint8)).save(folder / 'target_projected.png')
+        Image.fromarray((target * 255 + 0.5).astype(np.uint8)).save(folder / 'target_projected.png', compress_level=1)
         quant = torch.as_tensor(out[..., :3], dtype=torch.float32, device='cuda').reshape(-1, 3) / 255
         replay = (quant[o['idx']] * o['w'][..., None]).sum(1).cpu().numpy()
         actual = ci.reshape(-1, 3)[o['rows'].cpu().numpy()]
         mx = float(np.abs(replay - actual).max())
         outside = cm & ~o['screen']
         oo = float(np.abs(ci - bi)[outside].max()) if outside.any() else 0.0
-        r = {'phase': p, 'pixels': int(sel.sum()), 'candidate_vs_source': rm._masked_metrics(ci, target, sel), 'baseline_vs_source': rm._masked_metrics(bi, target, sel), 'quantized_atlas_replay_max': mx, 'outside_source_hardtrust_max_abs_threshold': OUTSIDE_COLOR_MAX_ABS, 'outside_source_hardtrust_delta_max_abs': oo, 'passes': bool(mx <= 1e-05 and outside_color_passes(oo))}
+        r = {
+            'phase': p,
+            'pixels': int(sel.sum()),
+            'candidate_vs_source': rm._masked_metrics(ci, target, sel),
+            'baseline_vs_source': rm._masked_metrics(bi, target, sel),
+            'quantized_atlas_replay_max': mx,
+            'outside_source_hardtrust_max_abs_threshold': OUTSIDE_COLOR_MAX_ABS,
+            'outside_source_hardtrust_delta_max_abs': oo,
+            'passes': bool(mx <= 1e-05 and outside_color_passes(oo)),
+        }
         r.update(mask_exact=True, mra_exact=True, evidence={'candidate': bind_file(Path(ca['attrs_npz'])), 'baseline': bind_file(Path(ba['attrs_npz']))})
         put(folder / 'PHASE_RECEIPT.json', r)
         return r
-    train = [render(x, 'train') for x in TRAIN]
-    held = [render(x, 'heldout') for x in HELD]
+    grid = [render(x, 'grid') for x in GRID_PHASES]
+    offgrid = [render(x, 'offgrid') for x in OFFGRID_PHASES]
     changed = int(np.any(out[..., :3] != pix[..., :3], axis=-1).sum())
-    conv = True
-    ok = conv and all((x['passes'] for x in train + held))
-    result = {'status': 'valid' if ok else 'invalid', 'arm': a.arm, 'mode': mode, 'seconds': time.monotonic() - began, 'candidate_glb': str(glb), 'gates': {'accepted': ok, 'common_support_and_protection': True, 'nonbase_identity': pres, 'all_19_phase_renders': len(train) + len(held) == 19}, 'atlas': {'active_texels': int(len(active)), 'blocked_texels': int(blocked.sum()), 'changed_texels': changed, 'alpha_exact': bool(np.array_equal(out[..., 3], pix[..., 3])) if out.shape[-1] == 4 else True}, 'phase_results': {'train': train, 'heldout': held}, 'limits': 'Fixed-shape, observed-source front control. It does not establish novel-view quality or a model improvement.'}
+    ok = all((x['passes'] for x in grid + offgrid))
+    result = {
+        'status': 'valid' if ok else 'invalid',
+        'schema': SCHEMA,
+        'mode': mode,
+        'seconds': time.monotonic() - began,
+        'candidate_glb': str(glb),
+        'gates': {
+            'accepted': ok,
+            'common_support_and_protection': True,
+            'nonbase_identity': pres,
+            'all_19_phase_renders': len(grid) + len(offgrid) == 19,
+        },
+        'atlas': {
+            'active_texels': int(len(active)),
+            'blocked_texels': int(blocked.sum()),
+            'changed_texels': changed,
+            'alpha_exact': bool(np.array_equal(out[..., 3], pix[..., 3])) if out.shape[-1] == 4 else True,
+        },
+        'phase_results': {'grid': grid, 'offgrid': offgrid},
+    }
     put(a.output / 'RECEIPT.json', result)
     put(a.output / 'RESULT.json', result)
     if not ok:

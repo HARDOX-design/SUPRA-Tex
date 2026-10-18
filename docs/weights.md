@@ -9,9 +9,9 @@ components, pinned external dependencies and inference defaults. The source
 preparation entrypoint reads it to obtain the complete model set:
 
 ```bash
-python scripts/prepare_models.py --repo supra3d/supra-tex
+python scripts/prepare_models.py
 python scripts/check_runtime.py
-python scripts/run_example.py --output outputs/pitcher_plant.glb
+python scripts/run_example.py --output outputs/spiny_whelk_shell.glb
 ```
 
 See [source setup](quickstart.md) for upstream access requirements and local
@@ -58,11 +58,11 @@ local VAEs. See [texturing](texturing.md) for component overrides.
 
 | We publish | Payload | License |
 | --- | --- | --- |
-| Supra-Tex 3D Completion | Full 2.1B-parameter model; approximately 8.38 GB, two safetensors shards | MIT |
-| Supra-Tex Material Adapter | All 257 learned tensors; approximately 134.25 MB, one safetensors file | Qwen Research License |
+| SUPRA-Tex 3D Completion | Full 2.1B-parameter model; default `denoiser_step0030000.safetensors`, approximately 8.38 GB, one safetensors file | MIT |
+| SUPRA-Tex Material Adapter | All 257 learned tensors; approximately 134.25 MB, one safetensors file | Qwen Research License |
 
 The material adapter is **Built with Qwen**. Its
-[research license](../LICENSE) applies to
+[research license](../THIRD_PARTY_NOTICES.md#qwen-research-license) applies to
 the adapter. The source repository's MIT license does not replace those terms.
 
 ## Load the project models
@@ -73,10 +73,18 @@ The standalone completion model directory contains:
 completion/
   config.json
   partial_normalization.json
-  model.safetensors.index.json
+  denoiser_step0030000.safetensors      # default weights
+  model.safetensors.index.json          # earlier release, kept as a fallback
   model-00001-of-00002.safetensors
   model-00002-of-00002.safetensors
 ```
+
+`denoiser_step0030000.safetensors` is the default completion checkpoint: model
+preparation downloads only it with `config.json` and `partial_normalization.json`,
+and a completion directory that contains it uses it automatically. Both
+checkpoints share the same architecture and normalization statistics. A directory
+without it falls back to `model.safetensors` or the sharded index; select any
+other weights explicitly with `--checkpoint`.
 
 For the standalone `--pretrained` invocation without `--pipeline`, supply the
 externally downloaded TRELLIS.2 VAEs through `--trellis-root`:
@@ -121,7 +129,7 @@ Use it in the frontend or complete `infer.py` command:
 ```
 
 The adapter retains attention LoRA **and modality embeddings**, in the native
-Supra-Tex/Qwen PBR format. The 134 MB export excludes optimizer and RNG state;
+SUPRA-Tex/Qwen PBR format. The 134 MB export excludes optimizer and RNG state;
 it preserves every learned tensor and does not quantize the model. Its size
 is not the full Qwen model size or a GPU memory requirement. The native
 runtime loads the base first, then applies the learned state. Generic PEFT

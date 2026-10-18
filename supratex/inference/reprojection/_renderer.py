@@ -4,6 +4,11 @@ import math
 from pathlib import Path
 from typing import Any, Mapping
 DEFAULT_RESOLUTION = 1024
+# Phase gates render the same baseline and candidate many times; reloading a GLB
+# decodes two 4096-square textures and recomputes normals each time. Keep the
+# last two meshes' render tensors per process, keyed by file version.
+_MESH_CACHE: dict[tuple, dict[str, Any]] = {}
+_RASTER_CONTEXTS: dict[str, Any] = {}
 
 def _load_textured_mesh(glb: Path, rt: dict[str, Any]) -> tuple[Any, Any, Any, Any, Any, Any, Any, float, float]:
     (np, trimesh) = (rt['np'], rt['trimesh'])
@@ -101,15 +106,48 @@ def _write_outputs(out: Path, albedo: Any, mra: Any, mask: Any, rt: Mapping[str,
     out.parent.mkdir(parents=True, exist_ok=True)
     albedo_u8 = (np.clip(albedo, 0.0, 1.0) * 255.0 + 0.5).astype(np.uint8)
     mask_u8 = (np.asarray(mask, dtype=np.float32) >= 0.5).astype(np.uint8) * 255
-    Image.fromarray(albedo_u8, mode='RGB').save(out)
+    # Diagnostic previews and evidence arrays use fast compression; the stored
+    # values are unchanged and receipts bind whatever bytes are written.
+    Image.fromarray(albedo_u8, mode='RGB').save(out, compress_level=1)
     mask_path = out.with_name(out.stem + '_mask.png')
-    Image.fromarray(mask_u8, mode='L').save(mask_path)
+    Image.fromarray(mask_u8, mode='L').save(mask_path, compress_level=1)
     result = {'png': str(out), 'mask_png': str(mask_path)}
     if save_attrs:
         attrs_path = out.with_suffix('.npz')
-        np.savez_compressed(attrs_path, albedo=np.asarray(albedo, dtype=np.float32), mra=np.asarray(mra, dtype=np.float32), mask=np.asarray(mask, dtype=np.uint8))
+        _save_npz(attrs_path, np, albedo=np.asarray(albedo, dtype=np.float32), mra=np.asarray(mra, dtype=np.float32), mask=np.asarray(mask, dtype=np.uint8))
         result['attrs_npz'] = str(attrs_path)
     return result
+
+def _save_npz(path: Path, np: Any, **arrays: Any) -> None:
+    """Write a standard compressed .npz with zlib level 1 (numpy uses level 6)."""
+    import zipfile
+    with zipfile.ZipFile(path, 'w', zipfile.ZIP_DEFLATED, compresslevel=1) as archive:
+        for name, value in arrays.items():
+            with archive.open(f'{name}.npy', 'w', force_zip64=True) as stream:
+                np.lib.format.write_array(stream, np.asanyarray(value), allow_pickle=False)
+
+def _mesh_tensors(glb: Path, device: str, runtime: Mapping[str, Any]) -> dict[str, Any]:
+    """Load a GLB once per file version and keep its render inputs on the device."""
+    path = glb.resolve()
+    stat = path.stat()
+    key = (str(path), stat.st_mtime_ns, stat.st_size, device, id(runtime['_load_textured_mesh']))
+    cached = _MESH_CACHE.get(key)
+    if cached is None:
+        torch = runtime['torch']
+        (vertices, faces, _normals, uv, texture, mr_texture, factor, metallic_factor, roughness_factor) = runtime['_load_textured_mesh'](glb, runtime)
+        uv_t = torch.as_tensor(uv, dtype=torch.float32, device=device)
+        cached = {
+            'vertices': torch.as_tensor(vertices, dtype=torch.float32, device=device),
+            'faces': torch.as_tensor(faces, dtype=torch.int32, device=device).contiguous(),
+            'uv': torch.stack((uv_t[:, 0], 1.0 - uv_t[:, 1]), dim=-1).contiguous(),
+            'texture': torch.as_tensor(texture, dtype=torch.float32, device=device)[None].contiguous(),
+            'mr_texture': torch.as_tensor(mr_texture, dtype=torch.float32, device=device)[None].contiguous(),
+            'factor': factor, 'metallic_factor': metallic_factor, 'roughness_factor': roughness_factor,
+        }
+        while len(_MESH_CACHE) >= 2:
+            _MESH_CACHE.pop(next(iter(_MESH_CACHE)))
+        _MESH_CACHE[key] = cached
+    return cached
 
 def render_glb(glb: str | Path, camera: Mapping[str, Any], out: str | Path, resolution: int=DEFAULT_RESOLUTION, *, device: str='cuda', rt: Mapping[str, Any] | None=None, save_attrs: bool=True) -> dict[str, str]:
     """Render an exported GLB through the supplied native-frame camera.
@@ -120,23 +158,22 @@ def render_glb(glb: str | Path, camera: Mapping[str, Any], out: str | Path, reso
     runtime = _runtime_imports() if rt is None else dict(rt)
     distance = _camera_distance(camera)
     (extrinsic, intrinsic) = _exported_glb_camera(camera, device, runtime)
-    values = runtime['_load_textured_mesh'](Path(glb), runtime)
-    (vertices, faces, _normals, uv, texture, mr_texture, factor, metallic_factor, roughness_factor) = values
+    mesh = _mesh_tensors(Path(glb), device, runtime)
     (torch, dr) = (runtime['torch'], runtime['dr'])
+    (vertices_t, faces_t, uv_t) = (mesh['vertices'], mesh['faces'], mesh['uv'])
+    (factor, metallic_factor, roughness_factor) = (mesh['factor'], mesh['metallic_factor'], mesh['roughness_factor'])
     projection = runtime['intrinsics_to_projection'](intrinsic, max(0.2, distance - 1.0), distance + 1.0)
-    vertices_t = torch.as_tensor(vertices, dtype=torch.float32, device=device)
-    faces_t = torch.as_tensor(faces, dtype=torch.int32, device=device).contiguous()
-    uv_t = torch.as_tensor(uv, dtype=torch.float32, device=device)
-    uv_t = torch.stack((uv_t[:, 0], 1.0 - uv_t[:, 1]), dim=-1).contiguous()
     vertices_h = torch.cat((vertices_t, torch.ones_like(vertices_t[:, :1])), dim=-1)
     clip = vertices_h @ (projection @ extrinsic).T
-    glctx = dr.RasterizeCudaContext(device=device)
+    glctx = _RASTER_CONTEXTS.get(device)
+    if glctx is None:
+        glctx = _RASTER_CONTEXTS[device] = dr.RasterizeCudaContext(device=device)
     (raster, _) = dr.rasterize(glctx, clip[None].contiguous(), faces_t, (resolution, resolution))
     mask = raster[..., -1] > 0
     (uv_pixel, _) = dr.interpolate(uv_t[None], raster, faces_t)
-    base = dr.texture(torch.as_tensor(texture, dtype=torch.float32, device=device)[None].contiguous(), uv_pixel, filter_mode='linear')
+    base = dr.texture(mesh['texture'], uv_pixel, filter_mode='linear')
     base = _srgb_factor_torch(base, factor, torch)
-    mra = dr.texture(torch.as_tensor(mr_texture, dtype=torch.float32, device=device)[None].contiguous(), uv_pixel, filter_mode='linear')
+    mra = dr.texture(mesh['mr_texture'], uv_pixel, filter_mode='linear')
     mra = torch.stack((mra[..., 2] * metallic_factor, mra[..., 1] * roughness_factor, torch.ones_like(mra[..., 0])), dim=-1).clamp(0.0, 1.0)
     base = torch.where(mask[..., None], base, torch.zeros_like(base))
     mra = torch.where(mask[..., None], mra, torch.zeros_like(mra))

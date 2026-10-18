@@ -56,7 +56,8 @@ def read_config(path: Path) -> dict:
 def parse_args(argv: list[str] | None = None) -> tuple[argparse.Namespace, list[str]]:
     parser = argparse.ArgumentParser(description=__doc__, allow_abbrev=False)
     parser.add_argument("--config", type=Path, default=ROOT / "ckpts/ready/models.json")
-    parser.add_argument("--input", type=Path, help="default: bundled assets/pitcher_plant.png")
+    parser.add_argument("--input", type=Path, help="default: assets/spiny_whelk_shell.png, or "
+                        "assets/cinema_signage.png with --dual-view")
     parser.add_argument("--output", type=Path, required=True, help="destination .glb")
     parser.add_argument("--use-input-alpha", action="store_true", help="explicitly require the input foreground alpha")
     parser.add_argument("--attention", choices=("auto", "flash_attn_3", "flash_attn", "sdpa", "xformers"),
@@ -86,13 +87,18 @@ def has_foreground_alpha(path: Path) -> bool:
         return low < 255 and high > 0
 
 
+def default_input(dual_view: bool) -> Path:
+    """Bundled example: the whelk shell, or the cinema signage for dual-view."""
+    return ROOT / "assets" / ("cinema_signage.png" if dual_view else "spiny_whelk_shell.png")
+
+
 def build_command(args: argparse.Namespace, extra: list[str], config: dict) -> tuple[list[str], dict[str, str]]:
     defaults = inference_defaults(config)
     attention = args.attention or defaults["attention"]
-    image = (args.input or ROOT / "assets/pitcher_plant.png").expanduser().resolve()
+    image = (args.input or default_input("--dual-view" in extra)).expanduser().resolve()
     if not image.is_file():
         raise FileNotFoundError(f"input image is missing: {image}")
-    use_alpha = args.use_input_alpha or args.input is None or has_foreground_alpha(image)
+    use_alpha = args.use_input_alpha or has_foreground_alpha(image)
     if not use_alpha and not config.get("rmbg_model"):
         raise ValueError("RGB or opaque input requires RMBG: prepare with --with-rmbg or --rmbg, then use that models.json")
     command = [sys.executable, str(ROOT / "infer.py"), "--input", str(image), "--output",

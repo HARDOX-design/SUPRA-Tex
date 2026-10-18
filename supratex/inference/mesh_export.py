@@ -1,5 +1,5 @@
 # Copyright (c) Microsoft Corporation.
-# Licensed under the MIT License; see LICENSE.
+# Licensed under the MIT License; see THIRD_PARTY_NOTICES.md.
 """O-Voxel mesh export adapted for packed GPU texture postprocessing.
 
 Geometry processing and baking follow TRELLIS.2's o-voxel/postprocess.py.

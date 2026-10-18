@@ -270,7 +270,7 @@ def install(args: argparse.Namespace) -> None:
     dry = args.dry_run
     print(f"{'DRY RUN: no subprocesses, downloads, or writes.' if dry else 'Installing runtime.'}\nSource: {ROOT}\n{'Conda environment' if args.conda else 'Virtual environment'}: {venv}")
     print("Prerequisites: Linux x86_64; Python 3.10; git; C++ compiler; CUDA toolkit 12.4 nvcc; usable NVIDIA GPU/driver.")
-    print("Child processes ignore inherited Python overlays and pip configuration/destinations; caches stay in the target environment. Default attention is SDPA; FlashAttention is optional.")
+    print("Child processes ignore inherited Python overlays and pip configuration/destinations; caches stay in the target environment. Without FlashAttention, inference uses SDPA; FlashAttention-2/3 is faster.")
     print("Native source pins identify upstream inputs, not verified equivalent binaries. FlexGEMM's install-time cache path is patched in a temporary copy; its original checkout stays unchanged.")
     if not dry:
         for required in (ROOT / "deployment/runtime/requirements-python.txt", ROOT / "deployment/runtime/moge/pyproject.toml", ROOT / "deployment/runtime/utils3d/pyproject.toml", ROOT / "scripts/check_runtime.py"):
@@ -330,7 +330,7 @@ def install(args: argparse.Namespace) -> None:
     if dry:
         print("Dry run complete. Prerequisites, builds, and imports have NOT been validated.")
     else:
-        print(f"Runtime dependency checks passed in {venv}. Model acquisition and an image-to-GLB run are still required for inference acceptance. Use --attention sdpa for the default runtime.")
+        print(f"Runtime dependency checks passed in {venv}. Model acquisition and an image-to-GLB run are still required for inference acceptance. FlashAttention-2/3 is faster than SDPA; see docs/installation.md.")
 
 
 def main(argv: list[str] | None = None) -> int:

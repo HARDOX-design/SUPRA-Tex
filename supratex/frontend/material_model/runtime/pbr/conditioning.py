@@ -1,5 +1,5 @@
 # Adapted for SUPRA-Tex distribution (2026): packaged local inference runtime.
-# Upstream FireRed portions remain under Apache-2.0; see LICENSE.
+# Upstream FireRed portions remain under Apache-2.0; see THIRD_PARTY_NOTICES.md.
 # Copyright (c) 2025 FireRed-Image-Edit. All rights reserved.
 """Image preprocessing and prompt conditioning for material inference."""
 from __future__ import annotations

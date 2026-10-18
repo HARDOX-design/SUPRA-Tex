@@ -20,8 +20,10 @@ The installer uses the active Conda environment. It installs
 PyTorch 2.6.0/cu124, torchvision 0.21.0/cu124, the pinned Python requirements,
 bundled MoGe/utils3d, NATTEN, and fixed public revisions of CuMesh, FlexGEMM,
 nvdiffrast and TRELLIS.2's o-voxel extension. It then checks package dependencies,
-CUDA access and actual runtime imports. SDPA requires neither FA2 nor FA3;
-`--flash-attn` optionally builds FA2. Native compilation may take some time.
+CUDA access and actual runtime imports. Native compilation may take some time.
+FlashAttention is not installed by default and inference then uses SDPA;
+FlashAttention-2/3 is faster and is selected automatically once installed (see
+[FlashAttention](installation.md#flashattention-recommended-for-speed)).
 
 Use a dedicated Conda environment rather than `base`. If you prefer `venv`,
 run `python3.10 scripts/install_runtime.py --venv /path/to/new/environment`
@@ -38,6 +40,10 @@ See [installation details](installation.md) for manual setup.
 The [project model repository](https://huggingface.co/supra3d/supra-tex) contains
 `pipeline.json`, the completion model, and the material adapter. See
 [model weights](weights.md) for component layouts and external dependencies.
+While we resolve model deployment issues, access to this repository is
+temporarily gated: request access on its model page before preparation. The
+models will be openly available without an access request once these issues
+are resolved.
 
 DINOv3 is required even for the default RGBA example and requires the
 [publisher's access approval](https://huggingface.co/facebook/dinov3-vitl16-pretrain-lvd1689m).
@@ -49,8 +55,8 @@ hf auth login
 ```
 
 ```bash
-python scripts/prepare_models.py --repo supra3d/supra-tex --dry-run
-python scripts/prepare_models.py --repo supra3d/supra-tex
+python scripts/prepare_models.py --dry-run
+python scripts/prepare_models.py
 ```
 
 The preparation entrypoint fetches the project subdirectories and external
@@ -67,10 +73,21 @@ For opaque RGB inputs, also request access to
 [RMBG-2](https://huggingface.co/briaai/RMBG-2.0) and include it in preparation:
 
 ```bash
-python scripts/prepare_models.py --repo supra3d/supra-tex --with-rmbg
+python scripts/prepare_models.py --with-rmbg
 ```
 
-This also adds RMBG to an existing preparation in the same output directory.
+To avoid RMBG-2's access request, use the public
+[BiRefNet](https://huggingface.co/ZhengPeng7/BiRefNet) instead. RMBG-2 is built on
+it and both load through the same foreground adapter; on our examples their
+foreground masks agree closely (IoU above 0.99). Download it and pass its directory:
+
+```bash
+hf download ZhengPeng7/BiRefNet --local-dir /path/to/BiRefNet
+python scripts/prepare_models.py --rmbg /path/to/BiRefNet
+```
+
+Either option also adds the foreground model to an existing preparation in the
+same output directory.
 Keep the original model sources and options; the script updates its generated
 configuration without replacing user edits. Authentication is not stored in
 `models.json`.
@@ -104,16 +121,18 @@ models can be reused with the overrides above.
 
 ```bash
 python scripts/check_runtime.py
-python scripts/run_example.py --output outputs/pitcher_plant.glb --attention sdpa
+python scripts/run_example.py --output outputs/spiny_whelk_shell.glb
 ```
 
-The default bundled example has foreground alpha. For your own opaque RGB image,
-prepare RMBG as above and run:
+The default bundled example has foreground alpha. For an opaque RGB image, such
+as the bundled candle jar, prepare RMBG as above and run:
 
 ```bash
-python scripts/run_example.py --input path/to/image.png \
-  --output outputs/object.glb --attention sdpa
+python scripts/run_example.py --input assets/metalwork_candle_jar.png \
+  --output outputs/metalwork_candle_jar.glb
 ```
+
+Replace `--input` with your own image.
 
 `--print-command` shows the exact inference command without running it.
 `--config` selects a different prepared `models.json`. The launcher uses this

@@ -9,6 +9,7 @@ from __future__ import annotations
 import json
 import math
 import os
+import sys
 from contextlib import contextmanager
 from pathlib import Path
 from typing import Any, Mapping
@@ -161,16 +162,28 @@ def _load_vae(models: Any, stem: Path) -> Any:
     return model
 
 
-def _load_case(input_dir: str | Path, torch: Any, image: Any) -> dict[str, Any]:
-    root = Path(input_dir)
-    required = {name: _file(root / name, name) for name in ("geometry.pt", "camera.json", "condition_rgba.png", "albedo.png", "mra.png")}
-    geometry = torch.load(required["geometry.pt"], map_location="cpu", weights_only=True)
+def _load_geometry(root: Path, torch: Any) -> tuple[Any, Any]:
+    """Read geometry.pt, or a compressed geometry.npz with the same verts/faces arrays."""
+    if not (root / "geometry.pt").is_file() and (root / "geometry.npz").is_file():
+        import numpy as np
+        with np.load(root / "geometry.npz") as arrays:
+            try:
+                return torch.from_numpy(arrays["verts"]).float().contiguous(), torch.from_numpy(arrays["faces"]).long().contiguous()
+            except KeyError as error:
+                raise ValueError("geometry.npz must contain arrays verts and faces") from error
+    geometry = torch.load(_file(root / "geometry.pt", "geometry.pt or geometry.npz"), map_location="cpu", weights_only=True)
     try:
-        vertices, faces = geometry["verts"].float().contiguous(), geometry["faces"].long().contiguous()
+        return geometry["verts"].float().contiguous(), geometry["faces"].long().contiguous()
     except (KeyError, AttributeError) as error:
         raise ValueError("geometry.pt must contain tensor keys verts and faces") from error
+
+
+def _load_case(input_dir: str | Path, torch: Any, image: Any, remove_floaters: bool = False) -> dict[str, Any]:
+    root = Path(input_dir)
+    required = {name: _file(root / name, name) for name in ("camera.json", "condition_rgba.png", "albedo.png", "mra.png")}
+    vertices, faces = _load_geometry(root, torch)
     if vertices.ndim != 2 or vertices.shape[1] != 3 or faces.ndim != 2 or faces.shape[1] != 3:
-        raise ValueError("geometry.pt must contain verts[N,3] and faces[M,3]")
+        raise ValueError("geometry must contain verts[N,3] and faces[M,3]")
     rgba = image.open(required["condition_rgba.png"]).convert("RGBA")
     albedo, mra = image.open(required["albedo.png"]).convert("RGB"), image.open(required["mra.png"]).convert("RGB")
     if rgba.size[0] != rgba.size[1]:
@@ -183,6 +196,13 @@ def _load_case(input_dir: str | Path, torch: Any, image: Any) -> dict[str, Any]:
         raise ValueError("camera.json must be valid JSON") from error
     if "camera_angle_x" not in camera or "distance" not in camera:
         raise ValueError("camera.json must provide canonical camera_angle_x and distance")
+    if remove_floaters:
+        import numpy as np
+        from .geometry_cleanup import remove_floaters as clean
+        vertices, faces, report = clean(vertices, faces, camera, np.asarray(rgba.getchannel("A")))
+        vertices, faces = vertices.contiguous(), faces.contiguous()
+        print(f"Floaters: removed {report['removed_components']} of {report['components']} components "
+              f"({report['removed_faces']} of {report['faces']} faces)", flush=True)
     return {"vertices": vertices, "faces": faces, "rgba": rgba, "albedo": albedo, "mra": mra, "camera": camera}
 
 
@@ -227,6 +247,35 @@ def _shape(vertices: Any, faces: Any, encoder: Any, runtime: Mapping[str, Any], 
     return latent, sparse.SparseTensor(torch.zeros(coords.shape[0], 6, device=device), coords)
 
 
+ALIGNMENT_WARNING_IOU = .9
+
+
+def _alignment_report(uv: Any, alpha: Any, admission: Mapping[str, int], np: Any, image: Any, image_filter: Any) -> dict[str, float]:
+    """Compare the projected geometry silhouette with the image foreground and print the result."""
+    pixels = (uv.detach().cpu().numpy() * RESOLUTION).astype(np.int64)
+    inside = (pixels >= 0).all(1) & (pixels < RESOLUTION).all(1)
+    splat = np.zeros((RESOLUTION, RESOLUTION), dtype=np.uint8)
+    splat[pixels[inside, 1], pixels[inside, 0]] = 255
+    # Surface cells project to about one pixel each; a 3x3 closing fills the gaps.
+    silhouette = np.asarray(image.fromarray(splat).filter(image_filter.MaxFilter(3)).filter(image_filter.MinFilter(3))) > 0
+    foreground = np.asarray(image.fromarray(alpha).resize((RESOLUTION, RESOLUTION), image.Resampling.NEAREST)) > 127
+    overlap = float((silhouette & foreground).sum())
+    report = {"silhouette_iou": overlap / max(float((silhouette | foreground).sum()), 1.),
+              "geometry_inside_image": overlap / max(float(silhouette.sum()), 1.),
+              "image_covered_by_geometry": overlap / max(float(foreground.sum()), 1.), **admission}
+    rejected = [f"missed geometry {admission['trusted_rays'] - admission['first_hits']}",
+                f"depth edge {admission['rejected_depth_edge']}"]
+    rejected += [f"{label} {admission[key]}" for key, label in (("rejected_silhouette", "silhouette margin"),
+                                                                ("rejected_grazing", "grazing")) if admission[key]]
+    print(f"Observation: silhouette IoU {report['silhouette_iou']:.3f} "
+          f"(geometry inside image {report['geometry_inside_image']:.3f}, image covered {report['image_covered_by_geometry']:.3f}); "
+          f"admitted {admission['admitted']} of {admission['trusted_rays']} trusted pixels ({', '.join(rejected)})", flush=True)
+    if report["silhouette_iou"] < ALIGNMENT_WARNING_IOU:
+        print(f"Warning: the image and geometry silhouettes disagree (IoU {report['silhouette_iou']:.3f} < "
+              f"{ALIGNMENT_WARNING_IOU}); mismatched regions rely on completion rather than the image.", flush=True)
+    return report
+
+
 def _partial(surface: Any, shape: Any, case: Mapping[str, Any], external: Any, projection: Any, encoder: Any, normalization: Mapping[str, Any], runtime: Mapping[str, Any], device: str) -> Any:
     torch, F, np, image, image_filter, sparse = runtime["torch"], runtime["F"], runtime["np"], runtime["Image"], runtime["ImageFilter"], runtime["sparse"]
     coords = surface.coords[:, 1:].long(); points = (coords.float() + .5) / RESOLUTION - .5
@@ -240,7 +289,9 @@ def _partial(surface: Any, shape: Any, case: Mapping[str, Any], external: Any, p
     mask = image.fromarray(np.where(alpha >= 254, 255, 0).astype(np.uint8)).resize((RESOLUTION, RESOLUTION), image.Resampling.NEAREST).filter(image_filter.MinFilter(5))
     trusted = torch.from_numpy(np.asarray(mask, dtype=np.uint8).copy() == 255)
     bits, ordered, order = native_observation.build_occupancy_index(coords)
-    owners = native_observation.pixel_first_occupied(dict(case["camera"]), bits, trusted)
+    admission: dict[str, int] = {}
+    owners = native_observation.pixel_first_occupied(dict(case["camera"]), bits, trusted, stats=admission)
+    _alignment_report(uv, alpha, admission, np, image, image_filter)
     visible = native_observation.owner_rows(coords, owners, ordered, order)
     if not bool(visible.any()): raise RuntimeError("the trusted alpha gate leaves no observed material surface")
     with torch.no_grad():
@@ -393,7 +444,7 @@ def _run_completion_low_vram(*, case: Mapping[str, Any], back_case: Mapping[str,
     return dual_stats
 
 
-def _run_completion(*, input_dir: str | Path, output: str | Path, model_config: str | Path, checkpoint: str | Path, trellis_root: str | Path, seed: int = 42, device: str = "cuda", texture_size: int = 4096, decimation_target: int = 500000, texture_format: str = "png", gutter: bool = False, back_case: Mapping[str, Any] | None = None) -> dict[str, Any]:
+def _run_completion(*, input_dir: str | Path, output: str | Path, model_config: str | Path, checkpoint: str | Path, trellis_root: str | Path, seed: int = 42, device: str = "cuda", texture_size: int = 4096, decimation_target: int = 500000, texture_format: str = "png", gutter: bool = False, back_case: Mapping[str, Any] | None = None, remove_floaters: bool = False) -> dict[str, Any]:
     """Complete PBR texture from public input maps and write one new GLB."""
     if device != "cuda": raise ValueError("public material completion currently requires device='cuda'")
     if texture_size <= 0 or decimation_target <= 0 or texture_format not in {"png", "webp"}: raise ValueError("invalid GLB export settings")
@@ -404,7 +455,7 @@ def _run_completion(*, input_dir: str | Path, output: str | Path, model_config: 
         return decoder_paths[value]
     runtime = _runtime(); torch, models = runtime["torch"], runtime["models"]
     if not torch.cuda.is_available(): raise RuntimeError("CUDA is unavailable")
-    case = _load_case(input_dir, torch, runtime["Image"]); ckpts = _completion_vae_root(trellis_root)
+    case = _load_case(input_dir, torch, runtime["Image"], remove_floaters); ckpts = _completion_vae_root(trellis_root)
     if os.environ.get("SUPRATEX_LOW_VRAM", "0") == "1":
         return _run_completion_low_vram(case=case, back_case=back_case, ckpts=ckpts, config=config,
                                         dataset=dataset, checkpoint_path=checkpoint_path, partial_stats=partial_stats,
@@ -451,23 +502,120 @@ def _run_completion(*, input_dir: str | Path, output: str | Path, model_config: 
     return dual_stats
 
 
+def _require_reprojection_atlas(texture_size: int, texture_format: str) -> None:
+    from supratex.pipeline_config import REFINE_ATLAS
+    if {"texture_size": texture_size, "texture_format": texture_format} != REFINE_ATLAS:
+        raise ValueError("--refine and --dual-view require a 4096 PNG atlas")
+
+
+def _publish(final: Path, output: Path, tag: str) -> None:
+    """Copy a finished mesh to ``output`` without replacing another writer's file."""
+    import shutil
+    output.parent.mkdir(parents=True, exist_ok=True)
+    temporary = output.with_name(f".{output.name}.{tag}.{os.getpid()}.tmp")
+    try:
+        with temporary.open("xb") as target, final.open("rb") as source:
+            shutil.copyfileobj(source, target)
+        os.link(temporary, output)
+    finally:
+        temporary.unlink(missing_ok=True)
+
+
+def _publish_unrefined(native: Path, output: Path, gutter: bool, error: Exception) -> None:
+    """Publish the completed mesh without refinement after a refinement failure."""
+    print(f"WARNING: texture refinement failed and was skipped ({type(error).__name__}: {error}); "
+          f"writing the unrefined result to {output}", file=sys.stderr, flush=True)
+    if not gutter:
+        _publish(native, output, "unrefined")
+        return
+    # Refinement normally supplies the gutter; apply the export-time one instead.
+    import tempfile
+    import trimesh
+    from .gutter import apply_gutter
+    scene = trimesh.load(native, force="scene")
+    for mesh in scene.geometry.values():
+        apply_gutter(mesh)
+    with tempfile.TemporaryDirectory(dir=output.parent) as directory:
+        padded = Path(directory) / "mesh.glb"
+        scene.export(str(padded))
+        _publish(padded, output, "unrefined")
+
+
+def _run_front_reprojection(arguments: dict[str, Any], work_dir: str | Path | None) -> None:
+    """Complete one view, then reproject its reference observation into the atlas."""
+    from .dual_view import digest, write_json
+
+    output = Path(arguments["output"]).expanduser().resolve()
+    work = Path(work_dir).expanduser().resolve() if work_dir else output.with_name(output.stem + "_refine")
+    if output.suffix.lower() != ".glb":
+        raise ValueError("output must have a .glb suffix")
+    if output.exists():
+        raise FileExistsError(f"refusing to overwrite existing output: {output}")
+    if work.exists():
+        raise FileExistsError(f"--refine work directory must be new: {work}")
+    _require_reprojection_atlas(arguments["texture_size"], arguments["texture_format"])
+    source = Path(arguments["input_dir"]).expanduser().resolve()
+    work.mkdir(parents=True)
+    # Reprojection always ends with its observation-guided one-texel gutter, so
+    # the export-time nearest-color gutter (--gutter) is not applied first.
+    receipt = {"profile": "supratex.front_refinement", "view": "front", "status": "running", "stage": "texture",
+               "input": str(source), "output": str(output), "seed": arguments["seed"],
+               "decimation_target": arguments["decimation_target"], "gutter": "continuous (reprojection)",
+               "checkpoint": str(Path(arguments["checkpoint"]).expanduser().resolve()),
+               "model_config": str(Path(arguments["model_config"]).expanduser().resolve())}
+    write_json(work / "receipt.json", receipt)
+    try:
+        native = work / "preds/mesh.glb"
+        _run_completion(**{**arguments, "input_dir": source, "output": native, "gutter": False})
+        # Reprojection runs in separate CUDA workers; release cached blocks first.
+        import gc
+        import torch
+        gc.collect()
+        torch.cuda.empty_cache()
+        receipt.update(stage="reprojection", native_mesh=str(native), native_mesh_sha256=digest(native))
+        write_json(work / "receipt.json", receipt)
+        from .reprojection import run_front_view
+        try:
+            final = run_front_view(native, source, work / "reproject")
+        except Exception as error:
+            _publish_unrefined(native, output, arguments["gutter"], error)
+            receipt.update(status="valid", stage="complete", refine="skipped",
+                           refine_error=f"{type(error).__name__}: {error}", mesh=str(native),
+                           gutter="export-time" if arguments["gutter"] else False,
+                           output_sha256=digest(output))
+            write_json(work / "receipt.json", receipt)
+            return
+        _publish(final, output, "reproject")
+        receipt.update(status="valid", stage="complete", refine="applied", mesh=str(final),
+                       output_sha256=digest(output))
+        write_json(work / "receipt.json", receipt)
+    except Exception as error:
+        receipt.update(status="failed", error=f"{type(error).__name__}: {error}")
+        write_json(work / "receipt.json", receipt)
+        raise
+
+
 def run_completion(*, input_dir: str | Path, output: str | Path, model_config: str | Path,
                    checkpoint: str | Path, trellis_root: str | Path, seed: int = 42,
                    device: str = "cuda", texture_size: int = 4096,
                    decimation_target: int = 500000, texture_format: str = "png", gutter: bool = False,
-                   back_view_dir: str | Path | None = None, work_dir: str | Path | None = None) -> None:
-    """Complete one view by default, or validate and publish a dual-view result."""
+                   back_view_dir: str | Path | None = None, work_dir: str | Path | None = None,
+                   refine: bool = False, remove_floaters: bool = False) -> None:
+    """Complete one view by default, optionally refining it, or publish a refined dual-view result."""
     arguments = dict(input_dir=input_dir, output=output, model_config=model_config,
                      checkpoint=checkpoint, trellis_root=trellis_root, seed=seed, device=device,
                      texture_size=texture_size, decimation_target=decimation_target,
-                     texture_format=texture_format, gutter=gutter)
+                     texture_format=texture_format, gutter=gutter, remove_floaters=remove_floaters)
+    # Dual-view refines both views itself, so --refine needs no separate pass there.
+    if refine and back_view_dir is None:
+        _run_front_reprojection(arguments, work_dir)
+        return
     if back_view_dir is None:
         if work_dir is not None:
-            raise ValueError("completion --work-dir is reserved for dual-view inference")
+            raise ValueError("completion --work-dir is reserved for dual-view inference or --refine")
         _run_completion(**arguments)
         return
     from .dual_view import CAMERA_PROTOCOL, PROTOCOL, digest, load_back_case, write_json
-    import shutil
 
     output = Path(output).expanduser().resolve()
     work = Path(work_dir).expanduser().resolve() if work_dir else output.with_name(output.stem + "_dual_view")
@@ -477,10 +625,7 @@ def run_completion(*, input_dir: str | Path, output: str | Path, model_config: s
         raise FileExistsError(f"refusing to overwrite existing output: {output}")
     if work.exists():
         raise FileExistsError(f"dual-view work directory must be new: {work}")
-    from supratex.pipeline_config import DUAL_VIEW_EXPORT
-    export = {"texture_size": texture_size, "texture_format": texture_format, "decimation_target": decimation_target}
-    if gutter or export != DUAL_VIEW_EXPORT:
-        raise ValueError("dual-view reprojection requires a 4096 PNG atlas, 500000-face target, and no --gutter")
+    _require_reprojection_atlas(texture_size, texture_format)
     front_root, back_root = Path(input_dir).expanduser().resolve(), Path(back_view_dir).expanduser().resolve()
     back = load_back_case(front_root, back_root)
     work.mkdir(parents=True)
@@ -490,6 +635,7 @@ def run_completion(*, input_dir: str | Path, output: str | Path, model_config: s
                "checkpoint": str(Path(checkpoint).expanduser().resolve()),
                "model_config": str(Path(model_config).expanduser().resolve()),
                "seed": seed, "sampler": "Euler", "steps": 25,
+               "decimation_target": decimation_target, "gutter": "continuous (reprojection)",
                "geometry_sha256": digest(front_root / "geometry.pt"),
                "cameras_sha256": digest(back_root / "cameras.json"),
                "front_material_receipt_sha256": digest(front_root / "material_receipt.json"),
@@ -497,7 +643,8 @@ def run_completion(*, input_dir: str | Path, output: str | Path, model_config: s
     write_json(work / "receipt.json", receipt)
     try:
         native = work / "preds/mesh.glb"
-        arguments.update(input_dir=front_root, output=native, back_case=back)
+        # Reprojection ends with its observation-guided gutter, so skip the export-time one.
+        arguments.update(input_dir=front_root, output=native, back_case=back, gutter=False)
         stats = _run_completion(**arguments)
         # Reprojection runs in separate CUDA workers. Release the completion
         # allocator's inactive blocks before those processes create contexts.
@@ -510,8 +657,11 @@ def run_completion(*, input_dir: str | Path, output: str | Path, model_config: s
         receipt.update(stage="reprojection")
         write_json(work / "receipt.json", receipt)
         from .reprojection import run_dual_view, validate_dual_view
-        final = run_dual_view(native, front_root, back_root, back["cameras"], work)
-        validation = validate_dual_view(work, raise_on_invalid=True)
+        try:
+            final = run_dual_view(native, front_root, back_root, back["cameras"], work)
+            validation = validate_dual_view(work, raise_on_invalid=True)
+        except Exception as error:
+            final, validation, refine_error = None, None, error
         # Model and reprojection work can be long-running. Revalidate the
         # original inputs and generation evidence before publishing the mesh.
         load_back_case(front_root, back_root)
@@ -522,18 +672,17 @@ def run_completion(*, input_dir: str | Path, output: str | Path, model_config: s
         for key, path in bindings.items():
             if receipt[key] != digest(path):
                 raise RuntimeError(f"input changed during dual-view completion: {key}")
-        output.parent.mkdir(parents=True, exist_ok=True)
-        temporary = output.with_name(f".{output.name}.dual-view.{os.getpid()}.tmp")
-        try:
-            with temporary.open("xb") as target, final.open("rb") as source:
-                shutil.copyfileobj(source, target)
-            # Atomic publication that cannot replace another writer's output.
-            os.link(temporary, output)
-        finally:
-            temporary.unlink(missing_ok=True)
-        receipt.update(status="valid", stage="complete", mesh=str(final), mesh_sha256=digest(final),
-                       output_sha256=digest(output), dual_stats=stats,
-                       postprocess_validation=validation, stitched_19_phase_checked=False)
+        if final is None:
+            _publish_unrefined(native, output, gutter, refine_error)
+            receipt.update(status="valid", stage="complete", refine="skipped",
+                           refine_error=f"{type(refine_error).__name__}: {refine_error}", mesh=str(native),
+                           gutter="export-time" if gutter else False,
+                           mesh_sha256=digest(native), output_sha256=digest(output), dual_stats=stats)
+        else:
+            _publish(final, output, "dual-view")
+            receipt.update(status="valid", stage="complete", refine="applied", mesh=str(final),
+                           mesh_sha256=digest(final), output_sha256=digest(output), dual_stats=stats,
+                           postprocess_validation=validation, stitched_19_phase_checked=False)
         write_json(work / "receipt.json", receipt)
     except Exception as error:
         receipt.update(status="failed", error=f"{type(error).__name__}: {error}")

@@ -93,8 +93,8 @@ FireRed with low-VRAM mode; use the default `qwen-image` backend for that mode.
 ## Validation status
 
 The recorded full-pipeline validation on 2026-10-14 used H800 80 GB,
-Python 3.10, PyTorch 2.6.0/cu124, SDPA, and CPU offload disabled. Both bundled
-examples, `pitcher_plant.png` (RGBA) and `metalwork_candle_jar.png` (opaque RGB),
+Python 3.10, PyTorch 2.6.0/cu124, SDPA, and CPU offload disabled. Two bundled
+images, `pitcher_plant.png` (RGBA) and `metalwork_candle_jar.png` (opaque RGB),
 completed image-to-GLB inference with 4096-square textures. The RGB example
 used RMBG-2. This run used local copies of the release and upstream weights;
 it did not test anonymous model downloads.
@@ -107,6 +107,13 @@ textures were preserved. The first run, including kernel compilation, took
 of 12,593 MiB and a peak process-tree RSS sum of 32.4 GiB; shared pages can be
 counted more than once in the RSS sum. The exported GLB passed mesh, UV, and
 embedded-texture checks. This RTX 3090 run covered single-view RGBA input.
+
+On 2026-10-19, RTX 3090 GPUs with the same software and automatic CPU offload
+ran the release defaults, including the `denoiser_step0030000.safetensors`
+completion checkpoint: image-to-GLB inference on three project-page cases (a
+metal candle tin, multimeter dial markings, and the disconnect-switch wiring
+table), `--refine` on the wiring table, and `texturing.py` on the bundled
+pitcher plant example. Dual-view inference was not part of these runs.
 
 When evaluating another device or input, check the complete pipeline and its
 output, GPU memory, system RAM, and elapsed time. Qwen's `REPORT.json` records

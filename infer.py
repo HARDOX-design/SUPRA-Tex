@@ -105,8 +105,8 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--pipeline-revision", help="HF revision of the complete SUPRA-Tex release")
     parser.add_argument("--models-dir", type=Path, help="prepared model directory for --pipeline (default: ckpts/ready)")
     parser.add_argument("--input", type=Path,
-                        default=Path(__file__).resolve().parent / "assets/pitcher_plant.png",
-                        help="source RGB/RGBA image (default: assets/pitcher_plant.png)")
+                        help="source RGB/RGBA image (default: assets/spiny_whelk_shell.png, or "
+                             "assets/cinema_signage.png with --dual-view)")
     parser.add_argument("--output", required=True, type=Path, help="new destination .glb file")
     parser.add_argument("--work-dir", type=Path, help="fresh intermediate directory (default: <output stem>_work beside the GLB)")
     parser.add_argument("--moge-model", help="local MoGe-2 checkpoint/directory or HF repo ID")
@@ -149,11 +149,21 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--texture-size", type=int)
     parser.add_argument("--decimation-target", type=int)
     parser.add_argument("--texture-format", choices=("png", "webp"))
-    parser.add_argument("--gutter", action="store_true", help="enable chart-isolated one-texel base-color gutter padding (default: disabled)")
-    parser.add_argument("--dual-view", action="store_true", help="add v4 back rendering, Astra/image_gen generation, and dual-view texturing")
+    parser.add_argument("--gutter", action="store_true", help="enable chart-isolated one-texel base-color gutter padding (default: disabled); "
+                             "with --refine, the observation-guided gutter is used")
+    parser.add_argument("--refine", action="store_true",
+                        help="refine the visible texture after export: write the observed reference-view albedo into the atlas "
+                             "and repair its UV gutters from the observation (sharper fine text and detail; needs the 4096 PNG "
+                             "atlas; adds about 2 minutes on an RTX 3090)")
+    parser.add_argument("--remove-floaters", action=argparse.BooleanOptionalAction, default=True,
+                        help="before completion, drop disconnected geometry pieces that project mostly outside the "
+                             "image foreground (default: on); extra geometry attached to the object is kept")
+    parser.add_argument("--dual-view", action="store_true", help="generate a back view (needs the external Codex CLI) and texture with both views; includes --refine for both views")
     parser.add_argument("--back-view-dir", type=Path, help="reuse a prepared, geometry-bound back package instead of generating a new back")
     args = parser.parse_args(argv)
-    from scripts.run_example import MODEL_KEYS, _pipeline_config, inference_defaults
+    from scripts.run_example import MODEL_KEYS, _pipeline_config, default_input, inference_defaults
+    if args.input is None:
+        args.input = default_input(args.dual_view)
     if not args.pipeline and (args.pipeline_revision is not None or args.models_dir is not None):
         parser.error("--pipeline-revision and --models-dir require --pipeline")
     material_paths = (args.material_weights, args.material_spec, args.material_checkpoint_manifest)
@@ -272,7 +282,8 @@ def run(args: argparse.Namespace) -> Path:
                "work_dir": str(work), "seed": args.seed, "gutter": args.gutter,
                "material_backend": args.material_backend, "material_seed": 42,
                "runtime": runtime,
-               "model_config": str(config), "checkpoint": str(checkpoint), "dual_view": args.dual_view}
+               "model_config": str(config), "checkpoint": str(checkpoint), "dual_view": args.dual_view,
+               "refine": args.refine, "remove_floaters": args.remove_floaters}
     def record() -> None:
         temporary = work / ".run.json.tmp"
         temporary.write_text(json.dumps(receipt, indent=2) + "\n", encoding="utf-8")
@@ -296,7 +307,7 @@ def run(args: argparse.Namespace) -> Path:
                               material_model=args.material_model, **material_paths,
                               revision=args.material_revision, cache_dir=args.cache_dir, local_files_only=args.local_files_only,
                               **({"record_material_provenance": True} if args.dual_view else {}))
-        optional = {}
+        optional = {"refine": True, "work_dir": work / "refine"} if args.refine else {}
         if args.dual_view:
             receipt.update(stage="back_view", frontend=result)
             record()
@@ -314,7 +325,7 @@ def run(args: argparse.Namespace) -> Path:
         run_completion(input_dir=handoff, output=output, model_config=config, checkpoint=checkpoint,
                        trellis_root=encoders, seed=args.seed, texture_size=args.texture_size,
                        decimation_target=args.decimation_target, texture_format=args.texture_format, gutter=args.gutter,
-                       **optional)
+                       remove_floaters=args.remove_floaters, **optional)
         if not output.is_file() or output.stat().st_size == 0:
             raise RuntimeError(f"completion did not emit a nonempty GLB: {output}")
     except Exception as error:

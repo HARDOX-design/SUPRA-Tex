@@ -1,6 +1,5 @@
 from typing import Optional
 import os
-from pathlib import Path
 
 from transformers import AutoModelForImageSegmentation
 import torch
@@ -8,12 +7,8 @@ from torchvision import transforms
 from PIL import Image
 
 
-_CY_ROOT = os.environ.get("CY_ROOT", str(Path(__file__).parents[5]))
-RMBG2_MODEL_PATH = os.environ.get(
-    "PIXAL3D_RMBG_MODEL_PATH",
-    os.path.join(_CY_ROOT, "model_ckpts", "RMBG-2.0"),
-)
-_REMOTE_MODEL_NAMES = {"ZhengPeng7/BiRefNet", "briaai/RMBG-2.0"}
+# A local RMBG-2.0 or BiRefNet directory can replace the Hub model.
+RMBG2_MODEL_PATH = os.environ.get("PIXAL3D_RMBG_MODEL_PATH", "briaai/RMBG-2.0")
 
 
 class RMBG2:
@@ -22,7 +17,7 @@ class RMBG2:
         model_name: str = RMBG2_MODEL_PATH,
         alpha_threshold: Optional[float] = None,
     ):
-        if model_name in _REMOTE_MODEL_NAMES:
+        if model_name == "briaai/RMBG-2.0":
             model_name = RMBG2_MODEL_PATH
         if alpha_threshold is not None and not 0.0 <= alpha_threshold <= 1.0:
             raise ValueError(f"alpha_threshold must be in [0, 1], got {alpha_threshold}")

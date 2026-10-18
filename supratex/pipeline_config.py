@@ -131,15 +131,16 @@ def validate_defaults(defaults: dict) -> dict:
     return defaults
 
 
-# Dual-view reprojection is calibrated for this export only.
-DUAL_VIEW_EXPORT = {"texture_size": 4096, "texture_format": "png", "decimation_target": 500000}
+# Refinement reads and writes a 4096-square PNG base-color atlas.
+REFINE_ATLAS = {"texture_size": 4096, "texture_format": "png"}
 
 
 def validate_export_options(args) -> None:
     """Check export options shared by infer.py and texturing.py; None means not yet resolved."""
-    if args.dual_view and (args.gutter or any(getattr(args, key) not in (None, value)
-                                              for key, value in DUAL_VIEW_EXPORT.items())):
-        raise ValueError("dual-view reprojection requires 4096 PNG, a 500000-face target, and no --gutter")
+    # Dual-view always refines both views, so it implies --refine.
+    if (args.dual_view or getattr(args, "refine", False)) and any(
+            getattr(args, key) not in (None, value) for key, value in REFINE_ATLAS.items()):
+        raise ValueError("--refine and --dual-view require the 4096 PNG atlas")
     if ((args.seed is not None and args.seed < 0)
             or (args.texture_size is not None and args.texture_size <= 0)
             or (args.decimation_target is not None and args.decimation_target <= 0)):

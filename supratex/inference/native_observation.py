@@ -177,10 +177,66 @@ def _dda_batch_kernel() -> Any:
     return _DDA_BATCH_KERNEL
 
 
-def pixel_first_occupied(camera: dict[str, Any], occupancy: np.ndarray, trusted: torch.Tensor, depth_edge_rtol: float = 0.04) -> torch.Tensor:
+# Optional admission rules, off by default. On well-aligned demo inputs they
+# removed 3-10% of trusted pixels without a visible change, so the released
+# behavior keeps only the depth-discontinuity rule.
+SILHOUETTE_MARGIN = 0
+GRAZING_COS = 0.0
+
+
+def _admitted_pixels(depth: np.ndarray, missed: np.ndarray, focal: tuple[float, float], depth_edge_rtol: float,
+                     silhouette_margin: int = SILHOUETTE_MARGIN, grazing_cos: float = GRAZING_COS,
+                     stats: dict | None = None) -> np.ndarray:
+    """Return pixels whose first-hit depth is a reliable observation.
+
+    ``depth`` is the first-hit view depth (NaN without a trusted hit) and
+    ``missed`` marks trusted rays that left the volume, i.e. the image
+    foreground outside the geometry silhouette. A local depth discontinuity
+    always rejects a pixel. Two optional rules can also reject pixels near the
+    geometry silhouette (``silhouette_margin`` pixels), where image/geometry
+    misalignment lands colors on the wrong surface, and at grazing incidence
+    (cosine below ``grazing_cos``, from the screen-space depth slope), where one
+    pixel stretches over a large surface area.
+    """
+    import torch.nn.functional as F
+
+    masked = torch.from_numpy(depth)
+    local_max = F.max_pool2d(masked.nan_to_num(-torch.inf)[None, None], 3, 1, 1)[0, 0]
+    local_min = -F.max_pool2d((-masked).nan_to_num(-torch.inf)[None, None], 3, 1, 1)[0, 0]
+    relative = ((local_max - local_min) / masked).nan_to_num(nan=0., posinf=0., neginf=0.)
+    edge = relative.numpy() > depth_edge_rtol
+    near_silhouette = np.zeros_like(edge)
+    if silhouette_margin > 0 and missed.any():
+        size = 2 * silhouette_margin + 1
+        near_silhouette = F.max_pool2d(torch.from_numpy(missed).float()[None, None], size, 1, silhouette_margin)[0, 0].numpy() > 0
+    grazing = np.zeros_like(edge)
+    if grazing_cos > 0:
+        # Central differences in pixels; a missing neighbour leaves NaN and is
+        # not rejected here. Dividing by the pixel footprint (depth / focal)
+        # turns the depth change into the surface slope along each image axis.
+        dz_dx = np.full_like(depth, np.nan)
+        dz_dy = np.full_like(depth, np.nan)
+        dz_dx[:, 1:-1] = (depth[:, 2:] - depth[:, :-2]) * .5
+        dz_dy[1:-1, :] = (depth[2:, :] - depth[:-2, :]) * .5
+        with np.errstate(invalid="ignore", divide="ignore"):
+            slope2 = (dz_dx * np.float32(focal[0]) / depth) ** 2 + (dz_dy * np.float32(focal[1]) / depth) ** 2
+            grazing = slope2 > np.float32(1 / grazing_cos ** 2 - 1)
+    hit = ~np.isnan(depth)
+    admitted = hit & ~edge & ~near_silhouette & ~grazing
+    if stats is not None:
+        stats.update(trusted_rays=int(hit.sum() + missed.sum()), first_hits=int(hit.sum()),
+                     rejected_depth_edge=int((hit & edge).sum()),
+                     rejected_silhouette=int((hit & ~edge & near_silhouette).sum()),
+                     rejected_grazing=int((hit & ~edge & ~near_silhouette & grazing).sum()),
+                     admitted=int(admitted.sum()))
+    return admitted
+
+
+def pixel_first_occupied(camera: dict[str, Any], occupancy: np.ndarray, trusted: torch.Tensor, depth_edge_rtol: float = 0.04,
+                         stats: dict | None = None) -> torch.Tensor:
     """Map trusted camera pixels to their first occupied volume cell."""
     if "extrinsic" in camera:
-        return pixel_first_occupied_cv(camera, occupancy, trusted, depth_edge_rtol)
+        return pixel_first_occupied_cv(camera, occupancy, trusted, depth_edge_rtol, stats=stats)
     if trusted.shape != (RESOLUTION, RESOLUTION):
         raise ValueError("trusted alpha mask must be 1024 by 1024")
     if "camera_angle_x" not in camera or "distance" not in camera:
@@ -195,24 +251,19 @@ def pixel_first_occupied(camera: dict[str, Any], occupancy: np.ndarray, trusted:
     hit = owners[hit_mask]
     if not hit.size:
         raise RuntimeError("no trusted pixels intersect the material volume")
-    # Preserve the production first-hit-depth admission gate.  It removes
-    # pixels at local internal-occlusion jumps before their owner cells become
-    # observations; applying it after unique-owner reduction would be wrong.
-    import torch.nn.functional as F
+    # Admission runs per pixel, before owner cells are deduplicated; applying
+    # it after unique-owner reduction would be wrong.
     depth = np.full((RESOLUTION, RESOLUTION), np.nan, dtype=np.float32)
     hit_depth = origin[2] - ((hit[:, 2].astype(np.float64) + .5) / RESOLUTION - .5)
     depth[y[hit_mask], x[hit_mask]] = hit_depth.astype(np.float32)
-    values = torch.from_numpy(depth)
-    valid = torch.from_numpy(~np.isnan(depth))
-    masked = torch.where(valid, values, torch.nan)
-    local_max = F.max_pool2d(masked.nan_to_num(-torch.inf)[None, None], 3, 1, 1)[0, 0]
-    local_min = -F.max_pool2d((-masked).nan_to_num(-torch.inf)[None, None], 3, 1, 1)[0, 0]
-    relative = ((local_max - local_min) / masked).nan_to_num(nan=0., posinf=0., neginf=0.)
+    missed = np.zeros((RESOLUTION, RESOLUTION), dtype=bool)
+    missed[y[~hit_mask], x[~hit_mask]] = True
+    admitted = _admitted_pixels(depth, missed, (focal, focal), depth_edge_rtol, stats=stats)
     retained = hit_mask.copy()
-    retained[hit_mask] &= ~((relative.numpy() > depth_edge_rtol)[y[hit_mask], x[hit_mask]])
+    retained[hit_mask] &= admitted[y[hit_mask], x[hit_mask]]
     hit = owners[retained]
     if not hit.size:
-        raise RuntimeError("depth-edge admission removed every first-hit observation")
+        raise RuntimeError("observation admission removed every first-hit observation")
     keys = np.unique((hit[:, 0].astype(np.int64) * RESOLUTION + hit[:, 1]) * RESOLUTION + hit[:, 2])
     return torch.from_numpy(np.stack((keys // (RESOLUTION * RESOLUTION), (keys // RESOLUTION) % RESOLUTION, keys % RESOLUTION), axis=1).astype(np.int32))
 
@@ -254,10 +305,8 @@ def pixel_hits_cv(camera: dict[str, Any], occupancy: np.ndarray, mask: np.ndarra
 
 
 def pixel_first_occupied_cv(camera: dict[str, Any], occupancy: np.ndarray, trusted: torch.Tensor,
-                            depth_edge_rtol: float = .04) -> torch.Tensor:
-    """Apply the production first-hit and depth-edge rules to a full CV camera."""
-    import torch.nn.functional as F
-
+                            depth_edge_rtol: float = .04, stats: dict | None = None) -> torch.Tensor:
+    """Apply the production first-hit admission rules to a full CV camera."""
     if trusted.shape != (RESOLUTION, RESOLUTION) or trusted.dtype != torch.bool:
         raise ValueError("trusted alpha must be a boolean observation-resolution image")
     if not math.isfinite(depth_edge_rtol) or depth_edge_rtol < 0:
@@ -276,14 +325,14 @@ def pixel_first_occupied_cv(camera: dict[str, Any], occupancy: np.ndarray, trust
         raise RuntimeError("first-hit owners must lie in front of the camera")
     depth = np.full((RESOLUTION, RESOLUTION), np.nan, dtype=np.float32)
     depth[ys[hits], xs[hits]] = hit_depth.astype(np.float32)
-    masked = torch.from_numpy(depth)
-    local_max = F.max_pool2d(masked.nan_to_num(-torch.inf)[None, None], 3, 1, 1)[0, 0]
-    local_min = -F.max_pool2d((-masked).nan_to_num(-torch.inf)[None, None], 3, 1, 1)[0, 0]
-    relative = ((local_max - local_min) / masked).nan_to_num(nan=0., posinf=0., neginf=0.)
-    retained = hits & ~(relative.numpy() > depth_edge_rtol)[ys, xs]
+    missed = np.zeros((RESOLUTION, RESOLUTION), dtype=bool)
+    missed[ys[~hits], xs[~hits]] = True
+    intrinsic = np.asarray(camera.get("projection_intrinsic", camera.get("intrinsic")), dtype=np.float64)
+    focal = (float(intrinsic[0, 0]) * RESOLUTION, float(intrinsic[1, 1]) * RESOLUTION)
+    retained = hits & _admitted_pixels(depth, missed, focal, depth_edge_rtol, stats=stats)[ys, xs]
     kept = owners[retained].astype(np.int64, copy=False)
     if not kept.size:
-        raise RuntimeError("depth-edge admission removed every first-hit observation")
+        raise RuntimeError("observation admission removed every first-hit observation")
     keys = np.unique((kept[:, 0] * RESOLUTION + kept[:, 1]) * RESOLUTION + kept[:, 2])
     return torch.from_numpy(np.stack((keys // (RESOLUTION * RESOLUTION),
                                       keys // RESOLUTION % RESOLUTION,

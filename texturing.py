@@ -11,8 +11,8 @@ def _validate_options(args: argparse.Namespace) -> None:
 
     if args.dual_view != (args.back_view_dir is not None):
         raise ValueError("--dual-view and --back-view-dir must be provided together")
-    if args.work_dir is not None and not args.dual_view:
-        raise ValueError("--work-dir requires --dual-view")
+    if args.work_dir is not None and not (args.dual_view or args.refine):
+        raise ValueError("--work-dir requires --dual-view or --refine")
     _pipeline.validate_export_options(args)
 
 
@@ -24,8 +24,10 @@ def _validate_pipeline_paths(args: argparse.Namespace) -> None:
     args.output = args.output.expanduser().absolute()
     if args.work_dir is not None:
         args.work_dir = args.work_dir.expanduser().absolute()
-    for name in ("geometry.pt", "camera.json", "condition_rgba.png", "albedo.png", "mra.png"):
+    for name in ("camera.json", "condition_rgba.png", "albedo.png", "mra.png"):
         require_file(args.input_dir / name)
+    if not any((args.input_dir / name).is_file() for name in ("geometry.pt", "geometry.npz")):
+        raise FileNotFoundError(f"missing geometry.pt or geometry.npz in {args.input_dir}")
     for name in ("model_config", "checkpoint"):
         if getattr(args, name) is not None:
             require_file(getattr(args, name).expanduser())
@@ -53,7 +55,7 @@ def _validate_pipeline_paths(args: argparse.Namespace) -> None:
 def _prepare_pipeline(args: argparse.Namespace, manifest: dict, source: dict,
                       completion: dict | None) -> None:
     """Resolve only completion and VAE weights, keeping the Hub cache reusable."""
-    from scripts.prepare_models import COMPLETION_PATTERNS, VAE_STEMS, check_safe_weights, require_file
+    from scripts.prepare_models import COMPLETION_PATTERNS, VAE_STEMS, completion_checkpoint, require_file
 
     def snapshot(descriptor: dict, patterns: list[str]) -> Path:
         if descriptor["kind"] == "local":
@@ -88,7 +90,7 @@ def _prepare_pipeline(args: argparse.Namespace, manifest: dict, source: dict,
                 require_file(root / "partial_normalization.json")
         if args.checkpoint is None:
             if standalone:
-                check_safe_weights(root)
+                completion_checkpoint(root)
             else:
                 require_file(root / "weights/material_completion.pt")
     if args.trellis_root is None:
@@ -107,7 +109,9 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
                                      allow_abbrev=False)
     parser.add_argument("--pipeline", help="SUPRA-Tex release directory, pipeline.json, or HF repo ID; loads completion and VAE weights")
     parser.add_argument("--pipeline-revision", help="HF revision of the complete SUPRA-Tex release")
-    parser.add_argument("--input-dir", required=True, type=Path, help="directory containing geometry.pt, camera.json, condition_rgba.png, albedo.png, and mra.png")
+    parser.add_argument("--input-dir", type=Path, default=Path(__file__).resolve().parent / "assets/examples/pitcher_plant",
+                        help="directory containing geometry.pt or geometry.npz, camera.json, condition_rgba.png, "
+                             "albedo.png, and mra.png (default: bundled assets/examples/pitcher_plant)")
     parser.add_argument("--output", required=True, type=Path, help="new destination GLB; an existing file is never replaced")
     parser.add_argument("--pretrained", help="local model bundle directory or Hugging Face namespace/repo")
     parser.add_argument("--revision", help="Hugging Face model revision")
@@ -123,8 +127,16 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--texture-size", type=int)
     parser.add_argument("--decimation-target", type=int)
     parser.add_argument("--texture-format", choices=("png", "webp"))
-    parser.add_argument("--gutter", action="store_true", help="enable chart-isolated one-texel base-color gutter padding (default: disabled)")
-    parser.add_argument("--dual-view", action="store_true", help="enable optional front/back observation fusion and validated reprojection")
+    parser.add_argument("--gutter", action="store_true", help="enable chart-isolated one-texel base-color gutter padding (default: disabled); "
+                             "with --refine, the observation-guided gutter is used")
+    parser.add_argument("--refine", action="store_true",
+                        help="refine the visible texture after export: write the observed reference-view albedo into the atlas "
+                             "and repair its UV gutters from the observation (sharper fine text and detail; needs the 4096 PNG "
+                             "atlas; adds about 2 minutes on an RTX 3090)")
+    parser.add_argument("--remove-floaters", action="store_true",
+                        help="before completion, drop disconnected geometry pieces that project mostly outside the "
+                             "image foreground; extra geometry attached to the object is kept")
+    parser.add_argument("--dual-view", action="store_true", help="add front/back observation fusion from a prepared back view; includes --refine for both views")
     parser.add_argument("--back-view-dir", type=Path, help="prepared v4 back-view package with generated RGBA, material maps and receipts")
     parser.add_argument("--work-dir", type=Path, help="new directory for dual-view intermediate meshes and receipts")
     args = parser.parse_args(argv)
@@ -171,8 +183,9 @@ def main() -> None:
             root, model_config=args.model_config, checkpoint=args.checkpoint,
             trellis_root=args.trellis_root)
     from supratex.inference import run_completion
-    optional = {"back_view_dir": args.back_view_dir, "work_dir": args.work_dir} if args.dual_view else {}
-    run_completion(input_dir=args.input_dir, output=args.output, model_config=args.model_config, checkpoint=args.checkpoint, trellis_root=args.trellis_root, seed=args.seed, texture_size=args.texture_size, decimation_target=args.decimation_target, texture_format=args.texture_format, gutter=args.gutter, **optional)
+    optional = ({"back_view_dir": args.back_view_dir, "work_dir": args.work_dir} if args.dual_view else
+                {"refine": True, "work_dir": args.work_dir} if args.refine else {})
+    run_completion(input_dir=args.input_dir, output=args.output, model_config=args.model_config, checkpoint=args.checkpoint, trellis_root=args.trellis_root, seed=args.seed, texture_size=args.texture_size, decimation_target=args.decimation_target, texture_format=args.texture_format, gutter=args.gutter, remove_floaters=args.remove_floaters, **optional)
 
 
 if __name__ == "__main__":

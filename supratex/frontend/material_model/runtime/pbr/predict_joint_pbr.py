@@ -1,6 +1,6 @@
 #!/usr/bin/env python
 # Adapted for SUPRA-Tex distribution (2026): packaged local inference runtime.
-# Upstream FireRed portions remain under Apache-2.0; see LICENSE.
+# Upstream FireRed portions remain under Apache-2.0; see THIRD_PARTY_NOTICES.md.
 """Joint albedo/MRA/normal inference for the factorized PBR checkpoint.
 
 The stock QwenImageEditPlusPipeline rejects prompt batches larger than one, so

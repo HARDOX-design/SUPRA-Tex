@@ -1,5 +1,5 @@
 # Adapted for SUPRA-Tex distribution (2026): packaged local inference runtime.
-# Upstream FireRed portions remain under Apache-2.0; see LICENSE.
+# Upstream FireRed portions remain under Apache-2.0; see THIRD_PARTY_NOTICES.md.
 """Factorized modality-axis attention for joint RGB-to-PBR prediction.
 
 The stock Qwen image transformer continues to process each modality as an

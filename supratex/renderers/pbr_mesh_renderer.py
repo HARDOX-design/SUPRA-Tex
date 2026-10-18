@@ -458,7 +458,6 @@ class PbrMeshRenderer:
                     out_dict.alpha = gb_alpha
                     
                 # Shading
-                #TODO
                 gb_basecolor = torch.clamp(gb_basecolor, 0.0, 1.0) ** 2.2
                 # gb_basecolor = torch.clamp(gb_basecolor, 0.0, 1.0)
                 gb_metallic = torch.clamp(gb_metallic, 0.0, 1.0)

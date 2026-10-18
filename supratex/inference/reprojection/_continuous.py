@@ -1,13 +1,23 @@
-"""Repair one-texel UV gutters with observed continuous albedo gradients."""
+"""Repair one-texel UV gutters with observed continuous albedo gradients.
+
+Each uncovered gutter texel next to an unblocked projected texel is anchored
+to that nearest covered donor's projected RGB, then shifted by the predicted
+albedo difference between the donor centre and the gutter centre extrapolated
+on the donor's UV face. A gutter is written only if both samples have positive
+camera depth, a finite non-degenerate UV face, bounded barycentrics, and fully
+hard-trusted bilinear source footprints, and if its bilinear atlas taps avoid
+untrusted pixels in all nineteen phases. Every UV-covered texel, blocked texel,
+alpha, and all non-base GLB content stay exact.
+"""
 from __future__ import annotations
 import argparse, copy, io, json, os, shutil, sys, time
 from pathlib import Path
-from ._common import OUTSIDE_COLOR_MAX_ABS, outside_color_passes, load_renderer, bind_file
+from ._common import GRID_PHASES, OFFGRID_PHASES, OUTSIDE_COLOR_MAX_ABS, IDENTITY_GATES, outside_color_passes, load_renderer, bind_file
 from . import _glb as fixed
+from ._project import SCHEMA as PROJECT_SCHEMA
+SCHEMA = 'supratex.reprojection.continuous'
 SIZE = 4096
 RES = 1024
-TRAIN = tuple(((x / 4, y / 4) for x in range(4) for y in range(4)))
-HELD = ((0.125, 0.375), (0.375, 0.625), (0.875, 0.125))
 REJECT_UNSAFE = 1
 REJECT_CHART = 2
 REJECT_DEGENERATE_UV = 4
@@ -46,39 +56,64 @@ def main():
     ap = argparse.ArgumentParser(description=__doc__)
     ap.add_argument('--manifest', type=Path, required=True)
     ap.add_argument('--case', required=True)
-    ap.add_argument('--evaluator', type=Path, required=True)
+    ap.add_argument('--renderer', type=Path, required=True)
     ap.add_argument('--output', type=Path, required=True)
     ap.add_argument('--gutter-radius', type=int, choices=(1,), default=1, help='Only one-texel gutter repair is supported.')
     a = ap.parse_args()
     if a.output.exists():
         raise FileExistsError(a.output)
     case = selected_case(a.manifest, a.case)
-    evaluator = require(a.evaluator, 'evaluator')
-    (work, bdir) = (Path(case['work']).absolute(), Path(case['b_output']).absolute())
+    renderer = require(a.renderer, 'renderer')
+    (work, pdir) = (Path(case['work']).absolute(), Path(case['project_output']).absolute())
     baseline = require(case['baseline_glb'], 'baseline GLB')
-    bglb = require(bdir / 'candidate/mesh.glb', 'accepted B GLB')
+    pglb = require(pdir / 'candidate/mesh.glb', 'accepted projection GLB')
     camera_path = require(work / 'camera.json', 'camera')
     rgba_path = require(work / 'condition_rgba.png', 'condition RGBA')
     albedo_path = require(work / 'albedo.png', 'predicted albedo')
-    domain_path = require(bdir / 'COMMON_DOMAIN.npz', 'B common domain')
-    bplan = json.loads(require(bdir / 'PLAN.json', 'B PLAN').read_text())
-    bresult = json.loads(require(bdir / 'RESULT.json', 'B RESULT').read_text())
-    expected = {'arm': 'B', 'baseline_glb': str(baseline), 'camera': str(camera_path), 'source_albedo': str(albedo_path), 'source_rgba': str(rgba_path), 'evaluator': str(evaluator)}
-    if [k for (k, v) in expected.items() if bplan.get(k) != v]:
-        raise RuntimeError('B PLAN binding failed')
-    if bresult.get('status') != 'valid' or not bresult.get('gates', {}).get('accepted'):
-        raise RuntimeError('B source is not an accepted B result')
-    if Path(bresult.get('candidate_glb', '')).absolute() != bglb:
-        raise RuntimeError('B result candidate binding failed')
-    identity = bresult.get('gates', {}).get('nonbase_identity', {})
-    if not all((identity.get(k) for k in ('materials_exact', 'mesh_structure_exact', 'node_structure_exact', 'nonbase_buffer_views_exact'))):
-        raise RuntimeError('B non-base identity gate failed')
-    phases = bresult.get('phase_results', {}).get('train', []) + bresult.get('phase_results', {}).get('heldout', [])
-    if not bresult.get('gates', {}).get('all_19_phase_renders') or not bresult.get('atlas', {}).get('alpha_exact') or len(phases) != 19 or (not all((x.get('passes') for x in phases))):
-        raise RuntimeError('B alpha or 19-phase receipt binding failed')
+    domain_path = require(pdir / 'COMMON_DOMAIN.npz', 'projection common domain')
+    pplan = json.loads(require(pdir / 'PLAN.json', 'projection PLAN').read_text())
+    presult = json.loads(require(pdir / 'RESULT.json', 'projection RESULT').read_text())
+    expected = {
+        'schema': PROJECT_SCHEMA,
+        'baseline_glb': str(baseline),
+        'camera': str(camera_path),
+        'source_albedo': str(albedo_path),
+        'source_rgba': str(rgba_path),
+        'renderer': str(renderer),
+    }
+    if [k for (k, v) in expected.items() if pplan.get(k) != v]:
+        raise RuntimeError('projection PLAN binding failed')
+    if presult.get('status') != 'valid' or not presult.get('gates', {}).get('accepted'):
+        raise RuntimeError('projection source is not an accepted projection result')
+    if Path(presult.get('candidate_glb', '')).absolute() != pglb:
+        raise RuntimeError('projection result candidate binding failed')
+    identity = presult.get('gates', {}).get('nonbase_identity', {})
+    if not all((identity.get(k) for k in IDENTITY_GATES)):
+        raise RuntimeError('projection non-base identity gate failed')
+    phase_results = presult.get('phase_results', {})
+    phases = phase_results.get('grid', []) + phase_results.get('offgrid', [])
+    if (not presult.get('gates', {}).get('all_19_phase_renders')
+            or not presult.get('atlas', {}).get('alpha_exact')
+            or len(phases) != 19
+            or not all((x.get('passes') for x in phases))):
+        raise RuntimeError('projection alpha or 19-phase receipt binding failed')
     a.output.mkdir(parents=True)
     shutil.copyfile(Path(__file__), a.output / 'CODE_SNAPSHOT.py')
-    write_once(a.output / 'PLAN.json', {'schema': 'supratex.reprojection.continuous', 'case': a.case, 'manifest': str(a.manifest.absolute()), 'accepted_b_glb': str(bglb), 'baseline_glb': str(baseline), 'camera': str(camera_path), 'evaluator': str(evaluator), 'source_albedo': str(albedo_path), 'source_rgba': str(rgba_path), 'common_domain': str(domain_path), 'train_phases': TRAIN, 'heldout_phases': HELD, 'gutter_radius': a.gutter_radius, 'operator': 'anchor each gutter to its accepted-B nearest covered donor RGB, then add the continuous predicted-albedo projection gradient from donor centre to extrapolated gutter centre', 'preservation': 'every UV-covered texel, blocked ID, alpha, mesh and all non-base GLB content remain exact', 'source_guard': 'requires positive camera depth, a finite non-degenerate UV face, bounded extrapolated barycentrics, and all four native source bilinear footprint pixels hard-trusted for both donor and extrapolated gutter samples', 'unsafe': 'all bilinear atlas taps of non-hard-trusted pixels from all 19 declared phases are excluded before writes', 'limits': 'Construction uses train and held-out phases for safety; held-out render is a validation phase, not independent selection.'})
+    write_once(a.output / 'PLAN.json', {
+        'schema': SCHEMA,
+        'case': a.case,
+        'manifest': str(a.manifest.absolute()),
+        'project_glb': str(pglb),
+        'baseline_glb': str(baseline),
+        'camera': str(camera_path),
+        'renderer': str(renderer),
+        'source_albedo': str(albedo_path),
+        'source_rgba': str(rgba_path),
+        'common_domain': str(domain_path),
+        'grid_phases': GRID_PHASES,
+        'offgrid_phases': OFFGRID_PHASES,
+        'gutter_radius': a.gutter_radius,
+    })
     os.environ['FLEX_GEMM_USE_AUTOTUNE_CACHE'] = '0'
     os.environ['FLEX_GEMM_AUTOSAVE_AUTOTUNE_CACHE'] = '0'
     import cv2
@@ -89,15 +124,15 @@ def main():
     torch.backends.cuda.matmul.allow_tf32 = False
     torch.manual_seed(42)
     started = time.monotonic()
-    rm = load_renderer(evaluator)
+    rm = load_renderer(renderer)
     rt = rm._runtime_imports()
     dr = rt['dr']
     camera = json.loads(camera_path.read_text())
-    (bdoc, bbin) = fixed._read_glb(bglb)
-    fixed._assert_fixed_scene(bdoc)
-    (ii, vi) = fixed._base_color_image_ref(bdoc)
-    (bimg, _, off, n) = fixed._decode_base_image(bdoc, bbin, ii, vi)
-    before = np.asarray(bimg).copy()
+    (pdoc, pbin) = fixed._read_glb(pglb)
+    fixed._assert_fixed_scene(pdoc)
+    (ii, vi) = fixed._base_color_image_ref(pdoc)
+    (pimg, _, off, n) = fixed._decode_base_image(pdoc, pbin, ii, vi)
+    before = np.asarray(pimg).copy()
     (basedoc, basebin) = fixed._read_glb(baseline)
     fixed._assert_fixed_scene(basedoc)
     (baseii, basevi) = fixed._base_color_image_ref(basedoc)
@@ -106,16 +141,20 @@ def main():
     if before.shape[:2] != (SIZE, SIZE):
         raise ValueError('requires 4096 atlas')
     if base_before.shape != before.shape:
-        raise RuntimeError('baseline/B baseColor image shape mismatch')
+        raise RuntimeError('baseline/projection baseColor image shape mismatch')
     with np.load(domain_path, allow_pickle=False) as z:
         (active_ids, blocked_ids) = (z['active_texel_ids'].astype(np.int64), z['blocked_texel_ids'].astype(np.int64))
-    if len(active_ids) != int(bresult.get('atlas', {}).get('active_texels', -1)) or len(blocked_ids) != int(bresult.get('atlas', {}).get('blocked_texels', -1)) or len(np.unique(active_ids)) != len(active_ids) or (len(np.unique(blocked_ids)) != len(blocked_ids)):
-        raise RuntimeError('B common-domain count or uniqueness binding failed')
+    project_atlas = presult.get('atlas', {})
+    if (len(active_ids) != int(project_atlas.get('active_texels', -1))
+            or len(blocked_ids) != int(project_atlas.get('blocked_texels', -1))
+            or len(np.unique(active_ids)) != len(active_ids)
+            or len(np.unique(blocked_ids)) != len(blocked_ids)):
+        raise RuntimeError('projection common-domain count or uniqueness binding failed')
     (active, blocked) = (np.zeros(SIZE * SIZE, bool), np.zeros(SIZE * SIZE, bool))
     (active[active_ids], blocked[blocked_ids]) = (True, True)
     if np.any(blocked & ~active):
-        raise RuntimeError('blocked IDs must be in B active domain')
-    (vertices, faces_np, _, uv_np, _, _, factor, _, _) = rt['_load_textured_mesh'](bglb, rt)
+        raise RuntimeError('blocked IDs must be in the projection active domain')
+    (vertices, faces_np, _, uv_np, _, _, factor, _, _) = rt['_load_textured_mesh'](pglb, rt)
     if not np.allclose(factor, 1):
         raise RuntimeError('unexpected baseColorFactor')
     exported = torch.as_tensor(vertices, dtype=torch.float32, device='cuda')
@@ -183,9 +222,20 @@ def main():
         target = rt['F'].grid_sample(src, (suv[trusted] * 2 - 1).reshape(1, 1, -1, 2), align_corners=False, padding_mode='zeros')[0, :, 0].T
         screen = np.zeros(RES * RES, bool)
         screen[rows.cpu().numpy()] = True
-        return {'phase': phase, 'idx': idx, 'w': weights, 'unsafe': unsafe, 'rows': rows, 'screen': screen.reshape(RES, RES), 'target': target}
-    operations = [operation(p) for p in TRAIN + HELD]
-    unsafe_ids = torch.unique(torch.cat([x['unsafe'].reshape(-1) for x in operations if x['unsafe'].numel()])) if any((x['unsafe'].numel() for x in operations)) else torch.empty(0, dtype=torch.long, device='cuda')
+        return {
+            'phase': phase,
+            'idx': idx,
+            'w': weights,
+            'unsafe': unsafe,
+            'rows': rows,
+            'screen': screen.reshape(RES, RES),
+            'target': target,
+        }
+    operations = [operation(p) for p in GRID_PHASES + OFFGRID_PHASES]
+    if any(x['unsafe'].numel() for x in operations):
+        unsafe_ids = torch.unique(torch.cat([x['unsafe'].reshape(-1) for x in operations if x['unsafe'].numel()]))
+    else:
+        unsafe_ids = torch.empty(0, dtype=torch.long, device='cuda')
     unsafe = np.zeros(SIZE * SIZE, bool)
     unsafe[unsafe_ids.cpu().numpy()] = True
     uvclip = torch.cat((uv * 2 - 1, torch.zeros_like(uv[:, :1]), torch.ones_like(uv[:, :1])), 1)[None]
@@ -219,7 +269,7 @@ def main():
     chart[covered] = face_chart[primitive[covered]]
     core = (active & ~blocked).reshape(SIZE, SIZE) & covered
     if np.any(active.reshape(SIZE, SIZE) & ~covered):
-        raise RuntimeError('B active domain includes uncovered texels')
+        raise RuntimeError('projection active domain includes uncovered texels')
     base = ~covered & ~blocked.reshape(SIZE, SIZE)
     rejection = np.zeros((SIZE, SIZE), np.uint8)
     rejection[base & unsafe.reshape(SIZE, SIZE)] |= REJECT_UNSAFE
@@ -303,7 +353,10 @@ def main():
     footprint_ok &= (donor_cell[:, 0] >= 0) & (donor_cell[:, 0] + 1 < RES) & (donor_cell[:, 1] >= 0) & (donor_cell[:, 1] + 1 < RES)
     fi = np.flatnonzero(footprint_ok)
     if len(fi):
-        footprint_ok[fi] &= hard[cell[fi, 1], cell[fi, 0]] & hard[cell[fi, 1], cell[fi, 0] + 1] & hard[cell[fi, 1] + 1, cell[fi, 0]] & hard[cell[fi, 1] + 1, cell[fi, 0] + 1] & hard[donor_cell[fi, 1], donor_cell[fi, 0]] & hard[donor_cell[fi, 1], donor_cell[fi, 0] + 1] & hard[donor_cell[fi, 1] + 1, donor_cell[fi, 0]] & hard[donor_cell[fi, 1] + 1, donor_cell[fi, 0] + 1]
+        footprint_ok[fi] &= (hard[cell[fi, 1], cell[fi, 0]] & hard[cell[fi, 1], cell[fi, 0] + 1]
+                             & hard[cell[fi, 1] + 1, cell[fi, 0]] & hard[cell[fi, 1] + 1, cell[fi, 0] + 1]
+                             & hard[donor_cell[fi, 1], donor_cell[fi, 0]] & hard[donor_cell[fi, 1], donor_cell[fi, 0] + 1]
+                             & hard[donor_cell[fi, 1] + 1, donor_cell[fi, 0]] & hard[donor_cell[fi, 1] + 1, donor_cell[fi, 0] + 1])
     donor_strength = rt['F'].grid_sample(trust_t, (torch.as_tensor(donor_source_uv, dtype=torch.float32, device='cuda') * 2 - 1).reshape(1, 1, -1, 2), align_corners=False, padding_mode='zeros')[0, 0, 0].cpu().numpy()
     endpoint_strength = rt['F'].grid_sample(trust_t, (torch.as_tensor(source_uv, dtype=torch.float32, device='cuda') * 2 - 1).reshape(1, 1, -1, 2), align_corners=False, padding_mode='zeros')[0, 0, 0].cpu().numpy()
     footprint_ok &= (donor_strength >= 1 - 1e-06) & (endpoint_strength >= 1 - 1e-06)
@@ -315,17 +368,18 @@ def main():
     donor_base = base_before[donor_y[cy[source_rows], cx[source_rows]], donor_x[cy[source_rows], cx[source_rows]], :3].astype(np.float32) / 255
     donor_actual = before[donor_y[cy[source_rows], cx[source_rows]], donor_x[cy[source_rows], cx[source_rows]], :3].astype(np.float32) / 255
     donor_rebuilt = donor_base + donor_strength[source_rows, None] * (donor_sampled - donor_base)
-    donor_b_source_byte_error = np.full(len(cy), np.inf, np.float32)
-    donor_b_source_byte_error[source_rows] = np.abs(donor_rebuilt - donor_actual).max(1) * 255
-    donor_b_source_ok = donor_b_source_byte_error <= 1.0
-    rejection[cy[~footprint_ok | footprint_ok & ~donor_b_source_ok], cx[~footprint_ok | footprint_ok & ~donor_b_source_ok]] |= REJECT_SOURCE
-    continuous_ok = footprint_ok & donor_b_source_ok
+    donor_project_byte_error = np.full(len(cy), np.inf, np.float32)
+    donor_project_byte_error[source_rows] = np.abs(donor_rebuilt - donor_actual).max(1) * 255
+    donor_project_ok = donor_project_byte_error <= 1.0
+    source_rejected = ~footprint_ok | footprint_ok & ~donor_project_ok
+    rejection[cy[source_rejected], cx[source_rejected]] |= REJECT_SOURCE
+    continuous_ok = footprint_ok & donor_project_ok
     eligible = np.zeros_like(base)
     eligible[cy[continuous_ok], cx[continuous_ok]] = True
     after = before.copy()
     after[cy, cx, :3] = before[donor_y[cy, cx], donor_x[cy, cx], :3]
     if not np.array_equal(after[cy, cx, :3], before[donor_y[cy, cx], donor_x[cy, cx], :3]):
-        raise RuntimeError('accepted-B donor byte fallback failed')
+        raise RuntimeError('projection donor byte fallback failed')
     (ey, ex) = np.nonzero(eligible)
     anchor = before[donor_y[ey, ex], donor_x[ey, ex], :3].astype(np.float32) / 255
     selected_rows = np.flatnonzero(continuous_ok)
@@ -338,15 +392,35 @@ def main():
     if not np.array_equal(after.reshape(-1, after.shape[-1])[active | blocked | unsafe], before.reshape(-1, before.shape[-1])[active | blocked | unsafe]):
         raise RuntimeError('active, blocked, or unsafe texels changed')
     eligible_ids = np.flatnonzero(eligible.reshape(-1))
-    np.savez_compressed(a.output / 'GUTTER_DIAGNOSTICS.npz', covered=covered, unsafe=unsafe.reshape(SIZE, SIZE), candidate=candidate, eligible=eligible, rejection=rejection, eligible_texel_ids=eligible_ids, donor_texel_ids=did[continuous_ok], donor_charts=donor_chart.reshape(-1)[eligible_ids], source_uv=source_uv[continuous_ok], donor_source_uv=donor_source_uv[continuous_ok], barycentric=bary[continuous_ok], donor_barycentric=donor_bary[continuous_ok], donor_uv_reconstruction_error=donor_uv_error[continuous_ok], donor_surface_error=donor_surface_error[continuous_ok], donor_strength=donor_strength[continuous_ok], endpoint_strength=endpoint_strength[continuous_ok], donor_b_source_byte_error=donor_b_source_byte_error[continuous_ok], gutter_radius=np.asarray(a.gutter_radius, dtype=np.int32))
+    np.savez_compressed(
+        a.output / 'GUTTER_DIAGNOSTICS.npz',
+        covered=covered,
+        unsafe=unsafe.reshape(SIZE, SIZE),
+        candidate=candidate,
+        eligible=eligible,
+        rejection=rejection,
+        eligible_texel_ids=eligible_ids,
+        donor_texel_ids=did[continuous_ok],
+        donor_charts=donor_chart.reshape(-1)[eligible_ids],
+        source_uv=source_uv[continuous_ok],
+        donor_source_uv=donor_source_uv[continuous_ok],
+        barycentric=bary[continuous_ok],
+        donor_barycentric=donor_bary[continuous_ok],
+        donor_uv_reconstruction_error=donor_uv_error[continuous_ok],
+        donor_surface_error=donor_surface_error[continuous_ok],
+        donor_strength=donor_strength[continuous_ok],
+        endpoint_strength=endpoint_strength[continuous_ok],
+        donor_project_byte_error=donor_project_byte_error[continuous_ok],
+        gutter_radius=np.asarray(a.gutter_radius, dtype=np.int32),
+    )
     blob = io.BytesIO()
     Image.fromarray(after).save(blob, format='PNG')
-    odoc = copy.deepcopy(bdoc)
-    obin = fixed._replace_image_payload(odoc, bbin, vi, off, n, blob.getvalue())
+    odoc = copy.deepcopy(pdoc)
+    obin = fixed._replace_image_payload(odoc, pbin, vi, off, n, blob.getvalue())
     glb = a.output / 'candidate/mesh.glb'
     glb.parent.mkdir()
     fixed._write_glb(glb, odoc, obin)
-    preservation = fixed._nonbase_identity_check(bdoc, bbin, glb, vi)
+    preservation = fixed._nonbase_identity_check(pdoc, pbin, glb, vi)
 
     def render(o, split):
         p = o['phase']
@@ -354,10 +428,11 @@ def main():
         folder.mkdir(parents=True)
         cam = copy.deepcopy(camera)
         cam['front_atlas_phase'] = p
-        (ca, bb) = (rm.render_glb(glb, cam, folder / 'repair.png', resolution=RES, rt=rt), rm.render_glb(bglb, cam, folder / 'B.png', resolution=RES, rt=rt))
+        ca = rm.render_glb(glb, cam, folder / 'repair.png', resolution=RES, rt=rt)
+        pa = rm.render_glb(pglb, cam, folder / 'project.png', resolution=RES, rt=rt)
         with np.load(ca['attrs_npz']) as z:
             (ci, cm, cmra) = (z['albedo'], z['mask'].astype(bool), z['mra'])
-        with np.load(bb['attrs_npz']) as z:
+        with np.load(pa['attrs_npz']) as z:
             (bi, bm, bmra) = (z['albedo'], z['mask'].astype(bool), z['mra'])
         if not np.array_equal(cm, bm) or not np.array_equal(cmra, bmra):
             raise RuntimeError('mask/MRA changed')
@@ -370,16 +445,66 @@ def main():
         outside = cm & ~o['screen']
         outdelta = float(np.abs(ci - bi)[outside].max()) if outside.any() else 0.0
         changed = cm & (np.abs(ci - bi).max(2) > 0)
-        r = {'phase': p, 'hardtrust_pixels': int(sel.sum()), 'repair_vs_source': rm._masked_metrics(ci, target, sel), 'B_vs_source': rm._masked_metrics(bi, target, sel), 'repair_vs_B_changed_pixels': int(changed.sum()), 'repair_vs_B': rm._masked_metrics(ci, bi, changed) if changed.any() else {'valid_pixels': 0}, 'quantized_atlas_replay_max': float(np.abs(replay - actual).max()), 'outside_source_hardtrust_max_abs_threshold': OUTSIDE_COLOR_MAX_ABS, 'outside_source_hardtrust_delta_max_abs': outdelta}
+        r = {
+            'phase': p,
+            'hardtrust_pixels': int(sel.sum()),
+            'repair_vs_source': rm._masked_metrics(ci, target, sel),
+            'project_vs_source': rm._masked_metrics(bi, target, sel),
+            'repair_vs_project_changed_pixels': int(changed.sum()),
+            'repair_vs_project': rm._masked_metrics(ci, bi, changed) if changed.any() else {'valid_pixels': 0},
+            'quantized_atlas_replay_max': float(np.abs(replay - actual).max()),
+            'outside_source_hardtrust_max_abs_threshold': OUTSIDE_COLOR_MAX_ABS,
+            'outside_source_hardtrust_delta_max_abs': outdelta,
+        }
         r['passes'] = bool(r['quantized_atlas_replay_max'] <= 1e-05 and outside_color_passes(outdelta))
-        r.update(mask_exact=True, mra_exact=True, evidence={'repair': bind_file(Path(ca['attrs_npz'])), 'B': bind_file(Path(bb['attrs_npz']))})
+        r.update(mask_exact=True, mra_exact=True, evidence={'repair': bind_file(Path(ca['attrs_npz'])), 'project': bind_file(Path(pa['attrs_npz']))})
         write_once(folder / 'PHASE_RECEIPT.json', r)
         return r
-    results = [render(x, 'train' if i < len(TRAIN) else 'heldout') for (i, x) in enumerate(operations)]
+    results = [render(x, 'grid' if i < len(GRID_PHASES) else 'offgrid') for (i, x) in enumerate(operations)]
     changed = np.any(after[..., :3] != before[..., :3], axis=-1)
     accepted = all((x['passes'] for x in results))
-    gate_ok = accepted and all((preservation.get(k) for k in ('materials_exact', 'mesh_structure_exact', 'node_structure_exact', 'nonbase_buffer_views_exact')))
-    receipt = {'status': 'valid' if gate_ok else 'invalid', 'candidate_glb': str(glb), 'seconds': time.monotonic() - started, 'gates': {'accepted': gate_ok, 'UV_covered_exact': True, 'B_active_exact': True, 'blocked_exact': True, 'alpha_exact': True, 'nonbase_identity': preservation, 'all_19_phase_renders': len(results) == 19}, 'atlas': {'UV_covered_texels': int(covered.sum()), 'UV_face_charts': int(face_chart.max() + 1), 'B_active_texels': int(active.sum()), 'blocked_texels': int(blocked.sum()), 'unsafe_all_phase_texels': int(unsafe.sum()), 'gutter_radius': a.gutter_radius, 'nearest_donor_uncovered_gutter_texels': int(candidate.sum()), 'continuous_eligible_uncovered_gutter_texels': int(eligible.sum()), 'changed_texels': int(changed.sum()), 'rejected_unsafe': int((rejection & REJECT_UNSAFE != 0).sum()), 'rejected_chart': int((rejection & REJECT_CHART != 0).sum()), 'rejected_degenerate_uv': int((rejection & REJECT_DEGENERATE_UV != 0).sum()), 'rejected_source_footprint_or_feather': int((rejection & REJECT_SOURCE != 0).sum()), 'donor_surface_oracle': {'threshold': 1e-05, 'checked': int(surface_checked.sum()), 'rejected': int((surface_checked & ~surface_ok).sum()), 'pre_filter_max': float(donor_surface_error[surface_checked].max()) if surface_checked.any() else 0.0, 'pre_filter_p99': float(np.quantile(donor_surface_error[surface_checked], 0.99)) if surface_checked.any() else 0.0, 'accepted_max': float(donor_surface_error[footprint_ok].max()) if footprint_ok.any() else 0.0}}, 'phase_results': {'train': results[:len(TRAIN)], 'heldout': results[len(TRAIN):]}, 'diagnostics': str(a.output / 'GUTTER_DIAGNOSTICS.npz'), 'code_snapshot': str(a.output / 'CODE_SNAPSHOT.py'), 'limits': 'Fixed-shape observed-source continuous-gutter candidate. It does not establish novel-view quality or model improvement.'}
+    gate_ok = accepted and all((preservation.get(k) for k in IDENTITY_GATES))
+    receipt = {
+        'status': 'valid' if gate_ok else 'invalid',
+        'schema': SCHEMA,
+        'candidate_glb': str(glb),
+        'seconds': time.monotonic() - started,
+        'gates': {
+            'accepted': gate_ok,
+            'UV_covered_exact': True,
+            'project_active_exact': True,
+            'blocked_exact': True,
+            'alpha_exact': True,
+            'nonbase_identity': preservation,
+            'all_19_phase_renders': len(results) == 19,
+        },
+        'atlas': {
+            'UV_covered_texels': int(covered.sum()),
+            'UV_face_charts': int(face_chart.max() + 1),
+            'project_active_texels': int(active.sum()),
+            'blocked_texels': int(blocked.sum()),
+            'unsafe_all_phase_texels': int(unsafe.sum()),
+            'gutter_radius': a.gutter_radius,
+            'nearest_donor_uncovered_gutter_texels': int(candidate.sum()),
+            'continuous_eligible_uncovered_gutter_texels': int(eligible.sum()),
+            'changed_texels': int(changed.sum()),
+            'rejected_unsafe': int((rejection & REJECT_UNSAFE != 0).sum()),
+            'rejected_chart': int((rejection & REJECT_CHART != 0).sum()),
+            'rejected_degenerate_uv': int((rejection & REJECT_DEGENERATE_UV != 0).sum()),
+            'rejected_source_footprint_or_feather': int((rejection & REJECT_SOURCE != 0).sum()),
+            'donor_surface_oracle': {
+                'threshold': 1e-05,
+                'checked': int(surface_checked.sum()),
+                'rejected': int((surface_checked & ~surface_ok).sum()),
+                'pre_filter_max': float(donor_surface_error[surface_checked].max()) if surface_checked.any() else 0.0,
+                'pre_filter_p99': float(np.quantile(donor_surface_error[surface_checked], 0.99)) if surface_checked.any() else 0.0,
+                'accepted_max': float(donor_surface_error[footprint_ok].max()) if footprint_ok.any() else 0.0,
+            },
+        },
+        'phase_results': {'grid': results[:len(GRID_PHASES)], 'offgrid': results[len(GRID_PHASES):]},
+        'diagnostics': str(a.output / 'GUTTER_DIAGNOSTICS.npz'),
+        'code_snapshot': str(a.output / 'CODE_SNAPSHOT.py'),
+    }
     write_once(a.output / 'RECEIPT.json', receipt)
     write_once(a.output / 'RESULT.json', receipt)
     if not gate_ok:

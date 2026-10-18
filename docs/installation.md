@@ -54,18 +54,36 @@ python -m pip check
 python scripts/check_runtime.py --imports-only
 ```
 
-Inference defaults to `--attention auto`:
-Hopper GPUs use FlashAttention-3 when its interface is importable; Ampere,
-Ada, and Hopper can use FlashAttention-2; otherwise PyTorch SDPA is selected.
-FA3 is Hopper-specific and is not required on A100 or RTX 3090/4090.
-Install an optional [FlashAttention implementation](https://github.com/Dao-AILab/flash-attention)
-that matches your GPU and CUDA/PyTorch build, or use `--attention sdpa`.
+## FlashAttention (recommended for speed)
+
+The installer does not install FlashAttention by default, so inference falls back
+to PyTorch SDPA. [FlashAttention](https://github.com/Dao-AILab/flash-attention)
+is faster: FlashAttention-2 supports Ampere, Ada, and Hopper GPUs (A100,
+RTX 30/40 series, H100/H800), and FlashAttention-3 is faster still on Hopper.
+Install them into the same environment:
+
+```bash
+# FlashAttention-2 (or rerun the installer with --flash-attn)
+pip install flash-attn==2.8.3 --no-build-isolation
+
+# FlashAttention-3, Hopper only; builds from source
+git clone https://github.com/Dao-AILab/flash-attention.git
+cd flash-attention/hopper && python setup.py install
+```
+
+Inference defaults to `--attention auto`, which picks the fastest installed
+backend: FlashAttention-3 on Hopper, then FlashAttention-2, then SDPA. No flag is
+needed after installation. Use `--attention sdpa` if an installed FlashAttention
+build does not match your GPU or CUDA/PyTorch version.
 Selected backends are printed at startup. Explicit backend requests are
 validated and do not silently fall back.
 The prepared-model runner and `infer.py --pipeline` clear inherited
 `ATTN_BACKEND` and `SPARSE_ATTN_BACKEND` overrides when using `auto`. Direct
 component commands respect them; see [GPU compatibility](gpu_compatibility.md)
 for override precedence.
+
+## Runtime options
+
 GPUs with at most 24 GiB enable CPU offload automatically; `--low-vram` and
 `--no-low-vram` override this policy. See [GPU compatibility](gpu_compatibility.md)
 for the supported paths, memory tradeoffs, and hardware validation status.

@@ -4,7 +4,7 @@ The optional geometry frontend supports the public native Pixal3D pipeline
 and the historical `paper` implementation. By default both keep Pixal3D's fixed
 mesh scale; `--geometry-scale-search` adds bounded mesh-scale calibration with
 the main geometry model. Only the final mesh and its matching canonical camera
-are passed to Supra-Tex. Intermediate meshes are not saved by
+are passed to SUPRA-Tex. Intermediate meshes are not saved by
 this adapter.
 
 ## Requirements
@@ -58,6 +58,9 @@ checkpoint tensors directly. Loading preserves the original constructor's
 per-layer dtypes, including BF16 flow blocks and FP32 decoder boundary layers;
 missing keys and incompatible shapes fail explicitly. This avoids initializing
 a full set of parameters that would immediately be overwritten.
+`scripts/convert_geometry_weights.py` can write `*.runtime.safetensors` copies
+already cast to these dtypes beside the originals; when present they are loaded
+instead, with identical results and about half the bytes read.
 
 ### Paper Pixal3D
 
@@ -104,7 +107,6 @@ TORCH_HOME="$PWD/ckpts/ready/torch" python -m supratex.frontend.pipeline \
   --moge-model ckpts/ready/external/moge2 \
   --geometry-package deployment/runtime/geometry \
   --geometry-model ckpts/ready/geometry \
-  --material-backend qwen-image \
   --material-base ckpts/ready/external/qwen-base \
   --material-model ckpts/ready/project/material
 ```
@@ -202,7 +204,7 @@ The paper source exports its final mesh after rotating `(x,y,z)` to `(x,-z,y)` a
 scaling by `0.5 / optimized_mesh_scale`. The adapter reverses the rotation
 and multiplies by the selected scale, recovering the canonical mesh in
 `[-0.5,0.5]`. The final camera retains the prepared generation distance and
-selected `mesh_scale`; Supra-Tex projection and DDA both use effective distance
+selected `mesh_scale`; SUPRA-Tex projection and DDA both use effective distance
 `distance * mesh_scale`. This paired conversion preserves the source projection.
 The original MoGe camera is retained under `moge_initial_camera` for provenance.
 Falling back to scale 1.0 restores the prepared baseline camera parameters.

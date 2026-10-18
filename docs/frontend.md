@@ -1,7 +1,7 @@
 # Image-to-Material Translation frontend
 
-Supra-Tex begins with foreground isolation, canonical-camera estimation, and
-material prediction. The default `qwen-image` backend uses the Supra-Tex
+SUPRA-Tex begins with foreground isolation, canonical-camera estimation, and
+material prediction. The default `qwen-image` backend uses the SUPRA-Tex
 Material Adapter based on Qwen-Image-2.1; `firered` selects the bundled factorized
 modality-axis joint-attention model. Both produce the aligned albedo and MRA
 maps used by surface-observation encoding.
@@ -21,11 +21,10 @@ After the [model preparation step](quickstart.md), run the frontend using the
 prepared local paths. For an RGB input, prepare RMBG-2 as well:
 
 ```bash
-python scripts/prepare_models.py --repo supra3d/supra-tex --with-rmbg
+python scripts/prepare_models.py --with-rmbg
 python -m supratex.frontend.pipeline --input input.png --output work \
   --rmbg-model ckpts/ready/external/rmbg2 \
   --moge-model ckpts/ready/external/moge2 \
-  --material-backend qwen-image \
   --material-base ckpts/ready/external/qwen-base \
   --material-model ckpts/ready/project/material
 ```
@@ -87,7 +86,7 @@ Keep the bundled runtime tree, including `diffsynth/` and
 `examples/qwen_image_21/pbr/{infer,inference_utils,inference_offload}.py`.
 The adapter requires its native JSON config and complete base model, including
 processor, VAE, text encoder, and Transformer. The safe file includes learned
-modality embeddings as well as LoRA and uses the Supra-Tex native loader.
+modality embeddings as well as LoRA and uses the SUPRA-Tex native loader.
 Legacy `checkpoint-0100000.pt` plus its matching `.complete.json` also remain
 supported. Neither adapter format replaces the external base model.
 
@@ -126,9 +125,9 @@ Individual foreground, camera, and FireRed stages remain available:
 
 ```bash
 python -m supratex.frontend.preprocess --input input.png --rmbg-model /models/rmbg2 \
-  --output-dir work --device cuda
+  --output-dir work
 python -m supratex.frontend.camera --image work/condition_rgb.png --model /models/moge2 \
-  --output work/camera.json --device cuda
+  --output work/camera.json
 python -m supratex.frontend.firered --base-model /models/firered-base \
   --condition work/condition_rgb.png --weights full_transformer.safetensors \
   --spec joint_contract.json --checkpoint-manifest checkpoint_complete.json --output work/material

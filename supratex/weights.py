@@ -3,8 +3,11 @@
 from pathlib import Path
 
 
+# Default completion weights inside a standalone release (RAW step 30000). The
+# release also keeps the earlier sharded model, which is used only as a fallback.
+DEFAULT_COMPLETION_CHECKPOINT = "denoiser_step0030000.safetensors"
 COMPLETION_ALLOW_PATTERNS = [
-    "config.json", "partial_normalization.json", "*.safetensors", "*.safetensors.index.json",
+    "config.json", "partial_normalization.json", DEFAULT_COMPLETION_CHECKPOINT,
     "configs/*.json", "weights/material_completion.pt", "weights/sparse_encoders/*.json",
     "weights/scvae/*.json", "vae/*.json", "vae/ckpts/*.json",
 ]
@@ -31,13 +34,16 @@ def resolve_completion_artifacts(
         if model_config is None:
             model_config = root / ("config.json" if standalone else "configs/inference_model.json")
         if checkpoint is None:
-            if standalone:
+            if standalone and (root / DEFAULT_COMPLETION_CHECKPOINT).is_file():
+                checkpoint = root / DEFAULT_COMPLETION_CHECKPOINT
+            elif standalone:
                 candidates = [root / name for name in ("model.safetensors", "model.safetensors.index.json")]
                 existing = [path for path in candidates if path.is_file()]
                 if len(existing) > 1:
                     raise ValueError("completion bundle has both single and sharded weights; select --checkpoint explicitly")
                 if not existing:
-                    raise FileNotFoundError(f"missing completion checkpoint: expected model.safetensors or model.safetensors.index.json in {root}")
+                    raise FileNotFoundError(f"missing completion checkpoint: expected {DEFAULT_COMPLETION_CHECKPOINT}, "
+                                            f"model.safetensors, or model.safetensors.index.json in {root}")
                 checkpoint = existing[0]
             else:
                 checkpoint = root / "weights/material_completion.pt"

@@ -1,8 +1,12 @@
-"""Dual-view atlas reprojection with measured candidate acceptance gates.
+"""Atlas reprojection with measured candidate acceptance gates.
 
-Both view candidates undergo sixteen train and three held-out phase renders.
-The final atlas is stitched with exact front priority and binary preservation;
-the stitched result is not itself subjected to another nineteen render phases.
+Each reprojected view writes observed albedo into visible atlas texels, then
+repairs one-texel UV gutters from the observed albedo gradient. Candidates
+are re-rendered at nineteen validation phases (a 4x4 sub-pixel grid and three
+off-grid offsets) and must pass every gate. Dual-view texturing
+stitches front and back with exact front priority and binary preservation; the
+stitched result is not itself subjected to another nineteen render phases.
+Single-view texturing can reproject its reference view alone.
 """
 from __future__ import annotations
 
@@ -22,7 +26,7 @@ from ._transform import (
     transform_glb, transformed_payload, validate_stitch,
 )
 
-__all__ = ["run_dual_view", "validate_dual_view"]
+__all__ = ["run_dual_view", "run_front_view", "validate_dual_view"]
 PROFILE = "supratex.dual_view.reproject_continuous"
 
 
@@ -72,7 +76,7 @@ def _command(module: str, arguments: list[str], log: Path) -> None:
 
 
 def _run_side(baseline: Path, source: Path, output: Path, camera: dict[str, Any]) -> Path:
-    """Publish one view only after the B and continuous candidates pass."""
+    """Publish one view only after the projection and continuous candidates pass."""
     output.mkdir(parents=True)
     baseline_binding = bind_file(baseline)
     code = {path.name: bind_file(path) for path in Path(__file__).parent.glob("*.py")}
@@ -80,21 +84,21 @@ def _run_side(baseline: Path, source: Path, output: Path, camera: dict[str, Any]
     source_bindings = _prepare_inputs(source, inputs, camera)
     input_bindings = {path.name: bind_file(path) for path in inputs.iterdir() if path.is_file()}
     renderer = Path(__file__).with_name("_renderer.py").resolve()
-    project, continuous = output / "B", output / "continuous"
+    project, continuous = output / "project", output / "continuous"
     _command("_project", [
-        "--arm", "B", "--baseline-glb", str(baseline),
+        "--baseline-glb", str(baseline),
         "--source-albedo", str(inputs / "albedo.png"),
         "--source-rgba", str(inputs / "condition_rgba.png"),
-        "--camera", str(inputs / "camera.json"), "--evaluator", str(renderer),
+        "--camera", str(inputs / "camera.json"), "--renderer", str(renderer),
         "--output", str(project),
-    ], output / "B.log")
+    ], output / "project.log")
     validate_candidate(project, continuous=False)
     manifest = output / "continuous_inputs.json"
     write_json(manifest, [{"label": "observation", "baseline_glb": str(baseline),
-                          "work": str(inputs), "b_output": str(project)}])
+                          "work": str(inputs), "project_output": str(project)}])
     _command("_continuous", [
         "--manifest", str(manifest), "--case", "observation",
-        "--evaluator", str(renderer), "--output", str(continuous),
+        "--renderer", str(renderer), "--output", str(continuous),
     ], output / "continuous.log")
     validate_candidate(continuous, continuous=True)
     for name, record in source_bindings.items():
@@ -115,7 +119,7 @@ def _run_side(baseline: Path, source: Path, output: Path, camera: dict[str, Any]
         "profile": PROFILE, "status": "valid", "baseline": baseline_binding,
         "source_inputs": source_bindings, "aligned_inputs": input_bindings,
         "code": code, "artifacts": artifacts, "mesh": str(final),
-        "gates": {"accepted": True, "B_accepted_all_19": True, "continuous_accepted_all_19": True},
+        "gates": {"accepted": True, "project_accepted_all_19": True, "continuous_accepted_all_19": True},
     }
     write_json(output / "receipt.json", receipt)
     _validate_side(output)
@@ -128,7 +132,7 @@ def _validate_side(output: Path) -> dict[str, Any]:
     receipt = read_json(output / "receipt.json")
     if receipt.get("profile") != PROFILE or receipt.get("status") != "valid":
         raise ValueError("invalid reprojection receipt profile or status")
-    if not all(receipt.get("gates", {}).get(key) is True for key in ("accepted", "B_accepted_all_19", "continuous_accepted_all_19")):
+    if not all(receipt.get("gates", {}).get(key) is True for key in ("accepted", "project_accepted_all_19", "continuous_accepted_all_19")):
         raise ValueError("reprojection side is missing mandatory gates")
     baseline = check_binding(receipt["baseline"])
     required_inputs = {"condition_rgb.png", "condition_rgba.png", "albedo.png", "mra.png"}
@@ -146,7 +150,8 @@ def _validate_side(output: Path) -> dict[str, Any]:
     for name, record in receipt["code"].items():
         check_binding(record, Path(__file__).with_name(name))
     expected_artifacts = {
-        "B/PLAN.json", "B/RECEIPT.json", "B/RESULT.json", "B/COMMON_DOMAIN.npz", "B/candidate/mesh.glb",
+        "project/PLAN.json", "project/RECEIPT.json", "project/RESULT.json", "project/COMMON_DOMAIN.npz",
+        "project/candidate/mesh.glb",
         "continuous/PLAN.json", "continuous/RECEIPT.json", "continuous/RESULT.json",
         "continuous/GUTTER_DIAGNOSTICS.npz", "continuous/candidate/mesh.glb", "continuous_inputs.json", "mesh.glb",
     }
@@ -156,16 +161,20 @@ def _validate_side(output: Path) -> dict[str, Any]:
         check_binding(record, output / name)
     if Path(receipt.get("mesh", "")).resolve() != (output / "mesh.glb").resolve():
         raise ValueError("reprojection output mesh path changed")
-    for name, continuous in (("B", False), ("continuous", True)):
+    for name, continuous in (("project", False), ("continuous", True)):
         validate_candidate(output / name, continuous=continuous)
-    bplan = read_json(output / "B" / "PLAN.json")
-    for key, path in {"baseline_glb": baseline, "source_albedo": output / "inputs_1024" / "albedo.png",
-                      "source_rgba": output / "inputs_1024" / "condition_rgba.png",
-                      "camera": output / "inputs_1024" / "camera.json"}.items():
-        if Path(bplan.get(key, "")).resolve() != path.resolve():
-            raise ValueError(f"B plan has an incorrect {key} binding")
+    project_plan = read_json(output / "project" / "PLAN.json")
+    expected_plan = {
+        "baseline_glb": baseline,
+        "source_albedo": output / "inputs_1024" / "albedo.png",
+        "source_rgba": output / "inputs_1024" / "condition_rgba.png",
+        "camera": output / "inputs_1024" / "camera.json",
+    }
+    for key, path in expected_plan.items():
+        if Path(project_plan.get(key, "")).resolve() != path.resolve():
+            raise ValueError(f"projection plan has an incorrect {key} binding")
     base_doc, base_binary, base_view, _, _, base_pixels = atlas(baseline)
-    for name in ("B/candidate/mesh.glb", "continuous/candidate/mesh.glb", "mesh.glb"):
+    for name in ("project/candidate/mesh.glb", "continuous/candidate/mesh.glb", "mesh.glb"):
         candidate = output / name
         _glb._nonbase_identity_check(base_doc, base_binary, candidate, base_view)
         pixels = atlas(candidate)[-1]
@@ -176,13 +185,47 @@ def _validate_side(output: Path) -> dict[str, Any]:
     return receipt
 
 
+def run_front_view(native_glb: Path, input_dir: Path, output_dir: Path) -> Path:
+    """Reproject the single reference view onto a single-view result.
+
+    This is the front half of dual-view texturing with the canonical reference
+    camera from ``camera.json``. Inputs are staged under ``output_dir`` so their
+    bindings stay valid; a missing ``condition_rgb.png`` is derived from the
+    RGBA observation with black premultiplication, as the frontend writes it.
+    """
+    import numpy as np
+    from PIL import Image
+
+    native, source = (Path(path).resolve(strict=True) for path in (native_glb, input_dir))
+    output = Path(output_dir).resolve()
+    if output.exists():
+        raise FileExistsError(f"front reprojection requires a new destination: {output}")
+    camera = read_json(source / "camera.json")
+    try:
+        camera = {"camera_angle_x": float(camera["camera_angle_x"]), "distance": float(camera["distance"]),
+                  "mesh_scale": float(camera.get("mesh_scale", 1.0))}
+    except (KeyError, TypeError, ValueError) as error:
+        raise ValueError("front reprojection requires a canonical camera with camera_angle_x and distance") from error
+    staged = output / "source"
+    staged.mkdir(parents=True)
+    for name in ("condition_rgba.png", "albedo.png", "mra.png", "camera.json"):
+        shutil.copyfile(source / name, staged / name)
+    if (source / "condition_rgb.png").is_file():
+        shutil.copyfile(source / "condition_rgb.png", staged / "condition_rgb.png")
+    else:
+        with Image.open(source / "condition_rgba.png") as image:
+            rgba = np.asarray(image.convert("RGBA"), dtype=np.float32) / 255.
+        Image.fromarray((np.clip(rgba[..., :3] * rgba[..., 3:4], 0, 1) * 255).astype(np.uint8)).save(staged / "condition_rgb.png")
+    return _run_side(native, staged, output / "front", camera)
+
+
 def run_dual_view(native_glb: Path, front_input_dir: Path, back_input_dir: Path,
                   cameras: dict[str, Any], output_dir: Path) -> Path:
     """Run both measured reprojections and publish the stitched final GLB.
 
     The caller owns geometry, generated-image, and material-model provenance.
     This function binds the provided model-independent maps, camera pack, native
-    mesh, operator code, candidate gates, and final atlas in its own receipt.
+    mesh, reprojection code, candidate gates, and final atlas in its own receipt.
     """
     native, front, back = (Path(path).resolve(strict=True) for path in (native_glb, front_input_dir, back_input_dir))
     output = Path(output_dir).resolve()
@@ -206,7 +249,7 @@ def run_dual_view(native_glb: Path, front_input_dir: Path, back_input_dir: Path,
             "camera_angle_x": back_camera["camera_angle_x"], "mesh_scale": 1.0,
         }
         back_mesh = _run_side(rotated, back, final_dir / "reproject", canonical_back)
-        protected = front_protection(output / "post" / "B" / "COMMON_DOMAIN.npz")
+        protected = front_protection(output / "post" / "project" / "COMMON_DOMAIN.npz")
         final = final_dir / "mesh.glb"
         stitch_gates = stitch(front_mesh, back_mesh, protected, final)
         _validate_side(output / "post")
@@ -218,7 +261,7 @@ def run_dual_view(native_glb: Path, front_input_dir: Path, back_input_dir: Path,
             "front_post_receipt": bind_file(output / "post" / "receipt.json"),
             "back_post_receipt": bind_file(final_dir / "reproject" / "receipt.json"),
             "camera_pack": bind_file(final_dir / "cameras.json"), "final_mesh": bind_file(final),
-            "front_protection": bind_file(output / "post" / "B" / "COMMON_DOMAIN.npz"),
+            "front_protection": bind_file(output / "post" / "project" / "COMMON_DOMAIN.npz"),
             "back_transform": {"rotation": rotation.tolist(), "translation": translation.tolist(), "distance": distance},
             "validation_scope": "Both view candidates passed 19-phase gates; the stitched atlas has exact front priority and preserved non-base content.",
         }
@@ -248,7 +291,7 @@ def validate_dual_view(output_dir: Path, *, raise_on_invalid: bool = False) -> d
             raise ValueError("dual-view reprojection gates or validation scope are incomplete")
         check_binding(receipt["front_post_receipt"], output / "post" / "receipt.json")
         check_binding(receipt["back_post_receipt"], output / "post_back" / "reproject" / "receipt.json")
-        check_binding(receipt["front_protection"], output / "post" / "B" / "COMMON_DOMAIN.npz")
+        check_binding(receipt["front_protection"], output / "post" / "project" / "COMMON_DOMAIN.npz")
         camera_path = check_binding(receipt["camera_pack"], output / "post_back" / "cameras.json")
         final = check_binding(receipt["final_mesh"], output / "post_back" / "mesh.glb")
         if Path(receipt.get("mesh", "")).resolve() != final:
@@ -275,7 +318,7 @@ def validate_dual_view(output_dir: Path, *, raise_on_invalid: bool = False) -> d
             raise ValueError("temporary back mesh differs from the required rigid transform")
         _validate_side(output / "post")
         _validate_side(output / "post_back" / "reproject")
-        protected = front_protection(output / "post" / "B" / "COMMON_DOMAIN.npz")
+        protected = front_protection(output / "post" / "project" / "COMMON_DOMAIN.npz")
         actual = validate_stitch(output / "post" / "mesh.glb", output / "post_back" / "reproject" / "mesh.glb", final, protected)
         if any(gates.get(key) != value for key, value in actual.items()):
             raise ValueError("stitched preservation evidence changed")

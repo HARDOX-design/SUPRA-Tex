@@ -120,7 +120,7 @@ def file_checks(config: dict) -> list[tuple[str, object]]:
     if config.get("rmbg_model"):
         checks.append(("RGB foreground model", lambda: require_nonempty(*(
             Path(config["rmbg_model"]) / name for name in
-            ("config.json", "model.safetensors", "BiRefNet_config.py", "birefnet.py", "preprocessor_config.json")))))
+            ("config.json", "model.safetensors", "BiRefNet_config.py", "birefnet.py")))))
     return checks
 
 

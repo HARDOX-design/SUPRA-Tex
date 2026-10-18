@@ -4,6 +4,14 @@ Dual-view inference adds a generated back observation to the single-view
 pipeline. Both views use the same geometry, material backend, model artifacts,
 and material seed 42. Front observations take priority where they overlap.
 
+> **Note:** Automatic back-view generation runs GPT-6 Astra with its built-in
+> image generation tool through the external Codex CLI (see
+> [Requirements](#requirements)), which this repository does not provide. As
+> foundation image models improve, dual-view results can improve with them.
+> Without that access, use single-view inference; for small visible text, add
+> `--refine` (see [texturing](texturing.md#texture-refinement)), which needs no
+> external service.
+
 ## Requirements
 
 Use the existing [CUDA environment](installation.md) and prepared models.
@@ -17,20 +25,27 @@ by the implementation; they are not supplied by this repository.
 `--local-files-only` controls model loading and does not make image generation
 offline. Reusing a prepared back package avoids a new generation request.
 
-This path accepts a 4096-pixel PNG atlas, a 500000-face decimation target,
-and no `--gutter`. It requires a new output GLB and a fresh work directory.
+Dual-view always refines both views: it projects each observed albedo into the
+atlas and repairs the UV gutters from the observations, as
+[`--refine`](texturing.md#texture-refinement) does for one view. It therefore
+needs the 4096 PNG atlas; any face target works, and `--gutter` uses the
+observation-guided gutter. If refinement fails, it is skipped with a warning and
+the completed front/back result is written unrefined (`refine: skipped` in
+`receipt.json`). It requires a new output GLB and a fresh work directory.
 
 ## Run automatically
 
-With the generation environment available:
+With the generation environment available, `--dual-view` without `--input` uses
+the cinema signage building from the project page (`assets/cinema_signage.png`):
 
 ```bash
-python infer.py --pipeline supra3d/supra-tex \
-  --input assets/pitcher_plant.png \
-  --output outputs/object_dual_view.glb \
-  --work-dir outputs/object_dual_view_work \
-  --dual-view
+python infer.py --pipeline supra3d/supra-tex --dual-view \
+  --output outputs/cinema_signage_dual_view.glb \
+  --work-dir outputs/cinema_signage_dual_view_work
 ```
+
+The image is opaque RGB, so `--pipeline` also prepares RMBG-2 for foreground
+extraction (see [model preparation](quickstart.md#2-prepare-the-models)).
 
 The command prepares the front geometry and material maps, renders a back normal
 pack, generates the back image, predicts matching material maps, and runs
@@ -49,7 +64,8 @@ Generate geometry and reference material maps with provenance recording enabled:
 
 ```bash
 TORCH_HOME="$PWD/ckpts/ready/torch" python -m supratex.frontend.pipeline \
-  --input assets/pitcher_plant.png --output work/front --use-input-alpha \
+  --input assets/cinema_signage.png --output work/front \
+  --rmbg-model ckpts/ready/external/rmbg2 \
   --moge-model ckpts/ready/external/moge2 \
   --geometry-package deployment/runtime/geometry \
   --geometry-model ckpts/ready/geometry \
@@ -61,8 +77,9 @@ TORCH_HOME="$PWD/ckpts/ready/torch" python -m supratex.frontend.pipeline \
 The example uses the default [prepared installation](quickstart.md). If you
 selected local overrides or another output directory, use the model paths and
 NAF cache recorded in its `models.json`.
-For an opaque RGB image, replace `--use-input-alpha` with
-`--rmbg-model /path/to/RMBG-2.0`. The front directory must contain:
+Prepare RMBG-2 with `--with-rmbg` (or BiRefNet with `--rmbg`) first. For an
+RGBA input with foreground alpha, replace `--rmbg-model` with
+`--use-input-alpha`. The front directory must contain:
 
 ```text
 front/
@@ -111,7 +128,7 @@ Without `--execute`, this command makes no generation request. To execute:
 ```bash
 python -m supratex.backview generate \
   --pack-dir work/back_pack --run-root work/back_generation \
-  --execute --workers 1
+  --execute
 python -m supratex.backview.harness audit --run-root work/back_generation
 python -m supratex.backview.harness report --run-root work/back_generation
 ```
@@ -156,7 +173,7 @@ For interrupted generation, reuse its run directory:
 
 ```bash
 python -m supratex.backview.harness run \
-  --run-root work/back_generation --execute --workers 1
+  --run-root work/back_generation --execute
 ```
 
 Add `--retry-review` to request a new attempt after a rejected visual review.
