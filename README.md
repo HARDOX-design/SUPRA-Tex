@@ -1,18 +1,34 @@
 <h1 align="center">SUPRA-Tex: 3D Generation with Super-Aligned Texture</h1>
 
 <p align="center">
-  Chen Yang · Jiemin Fang · Fanpeng Meng · Zihao Huang<br>
-  Jichen Pang · Guanjun Wu · Zhikuan Bao · Qi Tian
+  <a href="https://supra-3d.github.io/supratex/"><img src="https://img.shields.io/badge/Project-Page-blue" alt="Project page"></a>
+  <a href="https://arxiv.org/abs/2610.22352"><img src="https://img.shields.io/badge/Paper-arXiv-b31b1b" alt="arXiv paper"></a>
+  <a href="https://huggingface.co/spaces/UniLat3D/Supra-Tex"><img src="https://img.shields.io/badge/Demo-Hugging_Face-blueviolet" alt="Online demo"></a>
+  <a href="https://huggingface.co/supra3d/supra-tex"><img src="https://img.shields.io/badge/Models-Hugging_Face-yellow" alt="Model weights"></a>
+  <a href="#license"><img src="https://img.shields.io/badge/License-MIT-green" alt="Source license"></a>
 </p>
 
 <p align="center">
-  <a href="https://supra-3d.github.io/supratex/"><img src="https://img.shields.io/badge/Project-Page-blue" alt="Project page"></a>
-  <a href="https://huggingface.co/spaces/UniLat3D/Supra-Tex"><img src="https://img.shields.io/badge/Demo-Hugging_Face-blueviolet" alt="Online demo"></a>
-  <a href="https://huggingface.co/supra3d/supra-tex"><img src="https://img.shields.io/badge/Models-Hugging_Face-yellow" alt="Model weights"></a>
-  <a href="LICENSE"><img src="https://img.shields.io/badge/License-MIT-green" alt="Source license"></a>
+  <a href="https://chensjtu.github.io/">Chen Yang</a><sup>1*</sup>,
+  <a href="https://jaminfong.cn/">Jiemin Fang</a><sup>1*†✉</sup>,
+  <a href="https://mfp0610.github.io/">Fanpeng Meng</a><sup>1*</sup>,
+  <a href="https://inso-13.github.io/">Zihao Huang</a><sup>1</sup>,<br>
+  <a href="https://supra-3d.github.io/supratex/#paper">Jichen Pang</a><sup>2</sup>,
+  <a href="https://wuguanjun0627.github.io/">Guanjun Wu</a><sup>3</sup>,
+  <a href="https://supra-3d.github.io/supratex/#paper">Zhikuan Bao</a><sup>1</sup>,
+  <a href="https://www.qitian1987.com/index.html">Qi Tian</a><sup>1✉</sup>
 </p>
 
-https://github.com/user-attachments/assets/208ede7e-6db7-4f23-8deb-61d2ac5541f5
+<p align="center">
+  <sup>1</sup>Huawei Inc. &nbsp;&nbsp;
+  <sup>2</sup>Shanghai Jiao Tong University &nbsp;&nbsp;
+  <sup>3</sup>Huazhong University of Science and Technology<br>
+  <sup>*</sup>Equal contribution &nbsp;&nbsp;
+  <sup>†</sup>Project lead &nbsp;&nbsp;
+  <sup>✉</sup>Corresponding authors
+</p>
+
+https://github.com/user-attachments/assets/ecc9e9ec-e91f-4eba-927d-86322796459a
 
 **SUPRA-Tex** generates textured 3D assets from a single image, preserving details
 such as lettering, patterns, and material boundaries. It predicts PBR materials
@@ -27,102 +43,54 @@ a relightable GLB with base color, metallic, and roughness textures.
 - **Image-to-3D and mesh texturing.** Generate an asset from an image, or texture
   an existing mesh with matching camera and material observations.
 
-Learn more in the [method overview](docs/method.md), or try the
+Learn more on the [project page](https://supra-3d.github.io/supratex/), or try the
 [online demo](https://huggingface.co/spaces/UniLat3D/Supra-Tex).
 
-## Installation
+## Release Notes
 
-Use **Linux** with an **NVIDIA GPU** and **CUDA 12.4**. The setup below creates a
-Python 3.10 environment and installs PyTorch 2.6.0 and the required CUDA extensions.
-See [GPU compatibility](docs/gpu_compatibility.md) for tested hardware and memory options.
-
-### 1. Clone the repository
-
-```bash
-git clone https://github.com/Supra-3D/SUPRA-Tex.git
-cd SUPRA-Tex
-```
-
-### 2. Create the environment and install dependencies
-
-```bash
-conda create -n supra-tex python=3.10 -y
-conda activate supra-tex
-python scripts/install_runtime.py --conda
-```
-
-For CUDA setup and manual installation, see the [installation guide](docs/installation.md).
+- **[2026-10-16]** Initial release of the [project page](https://supra-3d.github.io/supratex/) and README. Inference code will follow.
 
 ## Pretrained Models
 
-Our checkpoints are available on [Hugging Face](https://huggingface.co/supra3d/supra-tex).
+Our models are available on [Hugging Face](https://huggingface.co/supra3d/supra-tex).
+
+> **Note:** We are actively working to resolve model deployment issues and will make the model available for use as soon as they are resolved; results from the current version may be inconsistent and do not reflect the final model quality.
 
 | Model | Parameters | Download |
 | --- | --- | --- |
 | SUPRA-Tex 3D Completion | 2.1B | [completion](https://huggingface.co/supra3d/supra-tex/tree/main/completion) |
 | SUPRA-Tex Material Adapter | 33.6M trainable | [material](https://huggingface.co/supra3d/supra-tex/tree/main/material) |
 
-The image-to-3D pipeline also uses Meta's
-[DINOv3](https://huggingface.co/facebook/dinov3-vitl16-pretrain-lvd1689m).
-To download this upstream dependency, request access on its model page and log in:
+## Inference Speed
 
-```bash
-hf auth login
-```
+Most inference time on modest hardware goes to reading weights and moving them
+between CPU and GPU, not to model compute. These settings help:
 
-The inference command below downloads the required models on first use and
-reuses them on later runs. Both inference entrypoints use the release's
-[`pipeline.json`](pipeline.json) for model configuration.
-See [model weights](docs/weights.md) for the complete dependency list and licenses.
+- **Keep weights on an SSD.** The geometry and Qwen stages read tens of
+  gigabytes of weights per run. On a hard disk, loading dominates both stages; an
+  SSD cuts their load time by more than half.
+- **Use a GPU with at least 48 GB.** GPUs with up to 24 GiB enable CPU offload
+  automatically, which moves the Qwen model block by block during inference.
+  Larger GPUs keep models resident, and the Qwen stage becomes much faster.
+- **Use two GPUs.** The geometry and Qwen material stages are independent.
+  `--parallel-frontend` runs them concurrently on the first two visible GPUs;
+  `CUDA_VISIBLE_DEVICES` selects which ones. Both stages then hold their models
+  in CPU memory at the same time, so check host RAM when offload is enabled.
+- **Store geometry weights in their runtime precision.** The geometry flow
+  checkpoints store float32 for blocks that run in bfloat16. Writing cast copies
+  once halves the bytes read on every run and gives identical results:
 
-## Usage
+  ```bash
+  python scripts/convert_geometry_weights.py --config ckpts/ready/models.json
+  ```
 
-### Image to 3D
-
-Generate a textured asset from the bundled [example image](assets/pitcher_plant.png):
-
-```bash
-python infer.py --pipeline supra3d/supra-tex \
-  --input assets/pitcher_plant.png \
-  --output outputs/pitcher_plant.glb
-```
-
-Replace `--input` with your image and choose a new `--output` path. The command
-exports the GLB and saves intermediate material maps in a sibling work directory.
-More [example images](assets/README.md) are included in `assets/`.
-
-Images with foreground alpha, including the bundled example, use that alpha
-automatically. For images without foreground alpha, the pipeline downloads
-[RMBG-2.0](https://huggingface.co/briaai/RMBG-2.0) for background removal;
-request access to that model before running on these images.
-
-Add `--low-vram` to enable CPU offload. See the
-[inference guide](docs/end_to_end.md) for further options, or the
-[setup guide](docs/quickstart.md) to download models ahead of time and run offline.
-
-### Texture an existing mesh
-
-Prepare a mesh, its camera, and reference-view material maps as described in
-[the texturing guide](docs/texturing.md), then run:
-
-```bash
-python texturing.py --pipeline supra3d/supra-tex \
-  --input-dir inputs/object \
-  --output outputs/textured_object.glb
-```
-
-This entrypoint loads the completion model and TRELLIS.2 VAEs. The
-[material frontend](docs/frontend.md) can prepare the reference-view material maps.
-For an additional back-view observation, see [dual-view texturing](docs/dual_view.md).
-
-## Training
-
-We provide training code for the 3D completion model and the Qwen material adapter.
-
-- **3D completion:** Follow the [training guide](docs/training.md) to prepare
-  aligned shape, material, and partial-observation latents and configure a run.
-- **Material adapter:** Follow the [material training guide](docs/training.md#material-adapter-training)
-  to encode paired-image data and launch the Qwen-Image-2.1 adapter trainer.
+  The copies (about 8 GB) are saved beside the originals and used automatically.
+- **Geometry scale search is optional.** By default, geometry follows Pixal3D
+  with a fixed mesh scale. `--geometry-scale-search` enables a bounded scale
+  calibration that adds one sampling pass per probe (up to three).
+- **Pre-tuned sparse-convolution kernels apply only to H800.** On H800 with
+  PyTorch 2.6 (CUDA 12.4), Triton 3.2, and FlexGEMM 1.0, a measured kernel
+  configuration is loaded. Other GPUs autotune these kernels on first use.
 
 ## Acknowledgments
 
@@ -133,11 +101,12 @@ making their work available.
 
 ## License
 
-Original SUPRA-Tex source and the 3D completion weights are released under the
-[MIT License](LICENSE). **Built with Qwen:** the material adapter uses the
-Qwen Research License for non-commercial research and evaluation. Third-party
-code and external models retain their respective licenses; see
-[third-party notices](LICENSE) and [model licenses](docs/weights.md).
+The 3D completion weights are released under the
+[MIT License](https://opensource.org/license/mit). Original SUPRA-Tex source
+will be released under the same license. **Built with Qwen:** the material
+adapter uses the Qwen Research License for non-commercial research and
+evaluation. Third-party code and external models retain their respective
+licenses.
 
 ## Citation
 
@@ -148,7 +117,8 @@ If you find this work useful for your research, please cite:
   title   = {{SUPRA-Tex}: 3D Generation with Super-Aligned Texture},
   author  = {Yang, Chen and Fang, Jiemin and Meng, Fanpeng and Huang, Zihao
              and Pang, Jichen and Wu, Guanjun and Bao, Zhikuan and Tian, Qi},
-  journal = {Tech report},
-  year    = {2026}
+  journal = {arXiv preprint arXiv:2610.22352},
+  year    = {2026},
+  url     = {https://arxiv.org/abs/2610.22352}
 }
 ```

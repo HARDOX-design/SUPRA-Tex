@@ -1,0 +1,1 @@
+Bundled Pixal3D runtime based on TencentARC/Pixal3D and Microsoft TRELLIS.2. Associated MIT notices are supplied alongside this file. See ../SOURCE_PROVENANCE.json for the distributed source inventory. No model weights are included.

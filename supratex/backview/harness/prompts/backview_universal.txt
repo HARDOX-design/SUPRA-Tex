@@ -1,0 +1,20 @@
+Use case: precise-object-edit
+Asset type: a camera-registered rear-view RGB texture observation for a 3D reconstruction pipeline.
+
+INPUT ROLES
+Image 1 is the BACK CAMERA NORMAL image: the authoritative, pixel-coordinate geometry guide and edit target. Its RGB channels encode surface orientation, not material color. Image 2 is the FRONT RGB image of the SAME object: an appearance reference only.
+
+TASK
+Replace the normal visualization in Image 1 with a plausible, richly detailed rear-view color appearance of the same object shown in Image 2. Return exactly one image, on the same canvas and in the exact camera view of Image 1. Use Image 1 to determine every visible surface, boundary, hole, occlusion, component, proportion and perspective. Use Image 2 only to infer material identity, palette, texture scale, finish, wear and the object's visual design.
+
+GEOMETRY IS FIXED
+Preserve the geometry guide's silhouette and all internal geometric boundaries at their exact image coordinates. Preserve thin parts, disconnected visible parts, cavities and background holes. Do not rotate, mirror, straighten, enlarge, recenter, crop or simplify the object. Do not adopt the front reference camera or copy its silhouette. Do not add, delete or relocate structural parts. Normal colors must be entirely replaced by material appearance; they are not paint, illumination or colored panels.
+
+TEXTURE AND REAR-SIDE REASONING
+Continue materials consistently around the object, respecting surface orientation and physical seams. Creatively complete previously unseen rear surfaces as part of the SAME object's visual design. New rear-side text, patterns, graphics, labels and decorative details are explicitly allowed and desired wherever they make sense for the object. They need not already be visible in the front image. Make them coherent with the front reference's identity, palette, typography, graphic style, print scale, material character and degree of wear. Create a plausible rear design, not a mirrored copy of the entire front image. Preserve existing readable brand spelling when reusing it, and keep new lettering clear, intentional and coherent rather than pseudo-letter clutter. Keep print, linework, seams, grain and small surface detail crisp at native resolution with correct surface perspective and no oversharpened halos. New texture details may not add or change physical geometry, and do not add labels to objects where they would be inappropriate.
+
+LIGHTING AND BRIGHTNESS CONSISTENCY
+Match the FRONT RGB reference's illumination style, exposure, white balance, overall object brightness, contrast, ambient fill, shadow softness, and highlight strength. The rear view must look like the same object photographed in the same lighting setup with the same exposure settings. Do not make the rear globally darker merely because it is the back, and do not brighten, wash out, recolor, or dramatically relight it. Preserve the apparent lightness of corresponding materials. Let only surface orientation and geometry justify local shading differences; keep shadow detail as readable as in the front reference. Do not copy front-view shadow shapes or specular highlights onto geometrically different rear surfaces. Normal-map channel values encode direction, never exposure or light intensity.
+
+RENDERING AND OUTPUT
+Match the reference's material character and level of stylization, with clear texture detail under the matched illumination described above. Do not add cast shadows outside the object. Produce a clean RGBA PNG with a genuinely transparent background, preserving the guide's negative spaces and contour. Request the same pixel dimensions as Image 1 (the current benchmark is 1024 by 1024). Return only the rear-view image: no panel layout, captions, borders, watermark, normal-map overlay or front-view inset.
