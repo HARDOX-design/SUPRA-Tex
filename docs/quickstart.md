@@ -98,8 +98,11 @@ separate Hub repositories. External local overrides are available as
 `--rmbg`; run `python scripts/prepare_models.py --help` for their accepted layouts.
 Local overrides avoid downloading those models but remain external file
 dependencies. `--cache-dir` uses a shared Hugging Face cache and links the
-prepared files to it; keep that cache available. Without an explicit cache,
-downloads go into the prepared model directory. Use `--local-files-only` for
+prepared files to it; keep that cache available. It reuses models already in
+that cache, so pass the hub cache directory (`HF_HUB_CACHE`, by default
+`~/.cache/huggingface/hub`), not `HF_HOME`. Without an explicit cache,
+downloads go into the prepared model directory and do not reuse an existing
+Hugging Face cache. Use `--local-files-only` for
 local files and cached downloads; NAF weights must already be prepared or
 supplied through `--naf-weights`.
 

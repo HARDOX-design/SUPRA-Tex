@@ -93,6 +93,10 @@ hf auth login
 python scripts/prepare_models.py
 ```
 
+默认情况下，模型会下载到 `ckpts/ready` 中，这个目录完全自包含。如果 Hugging Face 缓存里已经有其中一部分模型，
+可以加上 `--cache-dir ~/.cache/huggingface/hub` 直接复用，不必重新下载。注意要指向 hub 缓存目录
+（`HF_HUB_CACHE`），而不是 `HF_HOME`；这样 `ckpts/ready` 会链接到该缓存，因此不要删除它。
+
 如果输入是不带 alpha 通道的 RGB 图像，需要加上 `--with-rmbg` 来准备抠图模型
 [RMBG-2](https://huggingface.co/briaai/RMBG-2.0)；带前景 alpha 的图像不需要。RMBG-2 同样需要申请访问。
 不想申请的话，可以改用公开的 [BiRefNet](https://huggingface.co/ZhengPeng7/BiRefNet)：RMBG-2 正是基于它构建的，

@@ -104,6 +104,12 @@ hf auth login
 python scripts/prepare_models.py
 ```
 
+By default the models are downloaded into `ckpts/ready`, which stays
+self-contained. If your Hugging Face cache already holds some of them, add
+`--cache-dir ~/.cache/huggingface/hub` to reuse it instead of downloading again.
+Point it at the hub cache (`HF_HUB_CACHE`), not `HF_HOME`; `ckpts/ready` then
+links to that cache, so keep it.
+
 Add `--with-rmbg` to prepare [RMBG-2](https://huggingface.co/briaai/RMBG-2.0)
 for opaque RGB inputs; images with a foreground alpha channel do not need it.
 RMBG-2 also requires access approval. To avoid it, use the public
