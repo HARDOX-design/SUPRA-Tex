@@ -1,10 +1,8 @@
 # Training Overview
 
-This repository currently provides inference code and pretrained models.
-**We have no plans to release the training code at this time.** However, we
-would like to share the overall SUPRA-Tex training workflow and the open-source
-work it builds on to help others understand the method and conduct related
-research.
+This repository provides inference code and pretrained models. This overview
+shares the SUPRA-Tex training workflow and the open-source work it builds on, to
+help others understand the method and conduct related research.
 
 The workflow consists of data preparation, image-to-material prediction, and
 observation-guided 3D material completion.
