@@ -48,9 +48,9 @@ https://github.com/user-attachments/assets/ecc9e9ec-e91f-4eba-927d-86322796459a
 
 ## 更新日志
 
-- **[2026-10-19]** 发布推理代码，支持[图像生成 3D](docs/end_to_end.md)和[网格纹理生成](docs/texturing.md)，同时发布[训练流程概述](docs/train.md)。
-- **[2026-10-18]** [SUPRA-Tex 工作室](https://supra-3d.github.io/supratex/studio/studio.html)开放参观。
-- **[2026-10-16]** 发布[项目主页](https://supra-3d.github.io/supratex/)和[论文](https://arxiv.org/abs/2610.22352)。
+- 🔥 **[2026-10-19]** 发布推理代码，支持[图像生成 3D](docs/end_to_end.md)和[网格纹理生成](docs/texturing.md)，同时发布[训练流程概述](docs/train.md)。
+- 🎨 **[2026-10-18]** [SUPRA-Tex 工作室](https://supra-3d.github.io/supratex/studio/studio.html)开放参观。
+- 📄 **[2026-10-16]** 发布[项目主页](https://supra-3d.github.io/supratex/)和[论文](https://arxiv.org/abs/2610.22352)。
 
 ## 预训练模型
 

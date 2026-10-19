@@ -52,9 +52,9 @@ Learn more on the [project page](https://supra-3d.github.io/supratex/), or try t
 
 ## Release Notes
 
-- **[2026-10-19]** Inference code released for [image-to-3D](docs/end_to_end.md) and [mesh texturing](docs/texturing.md), along with a [training overview](docs/train.md).
-- **[2026-10-18]** The [SUPRA-Tex Studio](https://supra-3d.github.io/supratex/studio/studio.html) is open for a tour.
-- **[2026-10-16]** [Project page](https://supra-3d.github.io/supratex/) and [paper](https://arxiv.org/abs/2610.22352) released.
+- 🔥 **[2026-10-19]** Inference code released for [image-to-3D](docs/end_to_end.md) and [mesh texturing](docs/texturing.md), along with a [training overview](docs/train.md).
+- 🎨 **[2026-10-18]** The [SUPRA-Tex Studio](https://supra-3d.github.io/supratex/studio/studio.html) is open for a tour.
+- 📄 **[2026-10-16]** [Project page](https://supra-3d.github.io/supratex/) and [paper](https://arxiv.org/abs/2610.22352) released.
 
 ## Pretrained Models
 
