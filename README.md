@@ -219,7 +219,7 @@ staged commands.
 | --- | --- |
 | [Quick start](docs/quickstart.md) | Installation, model preparation, and the first run in detail |
 | [Method overview](docs/method.md) | Pipeline stages and where each is implemented |
-| [Training overview](docs/train.md) | Data preparation and training workflow; training code is not released |
+| [Training overview](docs/train.md) | Data preparation and training workflow |
 | [End-to-end inference](docs/end_to_end.md) | All `infer.py` options |
 | [Material frontend](docs/frontend.md) | Foreground, camera, and reference-view material maps |
 | [Geometry](docs/geometry.md) | Pixal3D geometry generation and optional scale search |

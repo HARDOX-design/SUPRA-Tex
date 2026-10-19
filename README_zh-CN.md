@@ -177,7 +177,7 @@ python texturing.py --pipeline supra3d/supra-tex --output outputs/pitcher_plant_
 | --- | --- |
 | [快速开始](docs/quickstart.md) | 安装、准备模型和首次运行的详细步骤 |
 | [方法概述](docs/method.md) | 各个阶段的原理及对应代码 |
-| [训练流程概述](docs/train.md) | 数据准备与训练流程（训练代码暂未开源） |
+| [训练流程概述](docs/train.md) | 数据准备与训练流程 |
 | [端到端推理](docs/end_to_end.md) | `infer.py` 的全部选项 |
 | [材质前端](docs/frontend.md) | 前景处理、相机估计和参考视角材质图 |
 | [几何生成](docs/geometry.md) | Pixal3D 几何生成，以及可选的尺度搜索 |
