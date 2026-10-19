@@ -1,0 +1,26 @@
+{
+  "verification": "source file presence and sizes only; no hashes calculated",
+  "geometry": {
+    "source": "Bundled Pixal3D runtime based on TencentARC/Pixal3D and Microsoft TRELLIS.2",
+    "note": "Vendored files are the distribution reference; an exact upstream Git revision is unavailable."
+  },
+  "qwen": {
+    "source": "Bundled native Qwen-Image-2.1 material runtime",
+    "note": "Vendored files are the distribution reference; an exact upstream Git revision is unavailable."
+  },
+  "moge": {
+    "source": "installed moge 2.0.0 source",
+    "upstream": "https://github.com/microsoft/MoGe.git",
+    "recorded_commit": "07444410f1e33f402353b99d6ccd26bd31e469e8"
+  },
+  "utils3d": {
+    "source": "installed utils3d 0.0.2 Python source",
+    "upstream": "https://github.com/EasternJournalist/utils3d",
+    "note": "Installed wheel provenance, no git commit recorded"
+  },
+  "naf": {
+    "source": "Bundled NAF runtime",
+    "upstream": "https://github.com/valeoai/NAF",
+    "note": "Bundled source is the distribution reference; an exact upstream Git revision is unavailable."
+  }
+}

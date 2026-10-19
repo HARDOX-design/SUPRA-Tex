@@ -1,0 +1,98 @@
+{
+  "format": "supratex_pipeline",
+  "schema_version": 1,
+  "models": {
+    "completion": "completion",
+    "material": "material"
+  },
+  "external_models": {
+    "qwen-base": {
+      "repo_id": "Qwen/Qwen-Image-2.1",
+      "revision": "d26bb61231c349cf6b7896fa83353113880e1ba3",
+      "allow_patterns": [
+        "processor/*",
+        "vae/*",
+        "text_encoder/*",
+        "transformer/*",
+        "LICENSE*",
+        "README.md"
+      ]
+    },
+    "geometry": {
+      "repo_id": "TencentARC/Pixal3D",
+      "revision": "b0cb2e1b794cab9aa0ac38a95d794a4d9337437f",
+      "allow_patterns": [
+        "ckpts/ss_flow_img_dit_1_3B_64_bf16.json",
+        "ckpts/ss_flow_img_dit_1_3B_64_bf16.safetensors",
+        "ckpts/ss_dec_conv3d_16l8_fp16.json",
+        "ckpts/ss_dec_conv3d_16l8_fp16.safetensors",
+        "ckpts/slat_flow_img2shape_dit_1_3B_512_bf16.json",
+        "ckpts/slat_flow_img2shape_dit_1_3B_512_bf16.safetensors",
+        "ckpts/slat_flow_img2shape_dit_1_3B_1024_bf16.json",
+        "ckpts/slat_flow_img2shape_dit_1_3B_1024_bf16.safetensors",
+        "ckpts/shape_dec_next_dc_f16c32_fp16.json",
+        "ckpts/shape_dec_next_dc_f16c32_fp16.safetensors"
+      ]
+    },
+    "moge2": {
+      "repo_id": "Ruicheng/moge-2-vitl-normal",
+      "revision": "cb0e8bbd6b1e243589717c78e750b1ba4c093acf",
+      "allow_patterns": [
+        "model.pt",
+        "README.md",
+        "LICENSE*"
+      ]
+    },
+    "dino": {
+      "repo_id": "facebook/dinov3-vitl16-pretrain-lvd1689m",
+      "revision": "ea8dc2863c51be0a264bab82070e3e8836b02d51",
+      "gated": true,
+      "allow_patterns": [
+        "config.json",
+        "model.safetensors",
+        "preprocessor_config.json",
+        "LICENSE*",
+        "README.md"
+      ]
+    },
+    "rmbg2": {
+      "repo_id": "briaai/RMBG-2.0",
+      "revision": "5df4c9c76d8170882c34f6986e848ee07fd0ba43",
+      "gated": true,
+      "allow_patterns": [
+        "config.json",
+        "model.safetensors",
+        "BiRefNet_config.py",
+        "birefnet.py",
+        "preprocessor_config.json",
+        "LICENSE*",
+        "README.md"
+      ]
+    },
+    "vae": {
+      "repo_id": "microsoft/TRELLIS.2-4B",
+      "revision": "af44b45f2e35a493886929c6d786e563ec68364d",
+      "allow_patterns": [
+        "ckpts/shape_enc_next_dc_f16c32_fp16.json",
+        "ckpts/shape_enc_next_dc_f16c32_fp16.safetensors",
+        "ckpts/tex_enc_next_dc_f16c32_fp16.json",
+        "ckpts/tex_enc_next_dc_f16c32_fp16.safetensors",
+        "ckpts/shape_dec_next_dc_f16c32_fp16.json",
+        "ckpts/shape_dec_next_dc_f16c32_fp16.safetensors",
+        "ckpts/tex_dec_next_dc_f16c32_fp16.json",
+        "ckpts/tex_dec_next_dc_f16c32_fp16.safetensors"
+      ]
+    },
+    "naf": {
+      "url": "https://github.com/valeoai/NAF/releases/download/model/naf_release.pth",
+      "filename": "naf_release.pth"
+    }
+  },
+  "defaults": {
+    "seed": 42,
+    "texture_size": 4096,
+    "decimation_target": 500000,
+    "texture_format": "png",
+    "attention": "auto"
+  }
+}

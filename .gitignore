@@ -1,0 +1,64 @@
+# Local Python environments and generated caches.
+.venv/
+venv/
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+*.egg-info/
+build/
+dist/
+.DS_Store
+
+# Local models, datasets, runs, and credentials.
+/ckpts/
+/external-src/
+/outputs/
+/data/
+/logs/
+/wandb/
+/training_data.json
+/roots.json
+.env
+.env.*
+!.env.example
+*.log
+
+# Local regression tests and test reports (not part of the source release).
+/tests/
+/deployment/runtime/qwen/examples/qwen_image_21/pbr/tests/
+.coverage
+htmlcov/
+
+# Local model-publishing tools and staging templates.
+/release/
+/scripts/export_completion_weights.py
+/scripts/export_qwen_weights.py
+/docs/huggingface.md
+
+# Local standalone deployment packaging and browser viewer.
+/deployment/scripts/
+/deployment/viewer/
+/deployment/README.md
+/deployment/CODE_ONLY_README.md
+/deployment/deploy.json
+/deployment/*.local.json
+
+# This source release contains inference only; private training lives elsewhere.
+**/train.py
+**/train/
+**/trainers/
+**/training/
+**/datasets/
+/configs/training*.json
+/configs/roots.example.json
+/docs/training.md
+/deployment/runtime/qwen/diffsynth/core/offload_training/
+
+# Only the Qwen PBR inference entry point and its helpers are public.
+/deployment/runtime/qwen/examples/qwen_image_21/pbr/*
+!/deployment/runtime/qwen/examples/qwen_image_21/pbr/README.md
+!/deployment/runtime/qwen/examples/qwen_image_21/pbr/infer.py
+!/deployment/runtime/qwen/examples/qwen_image_21/pbr/inference_utils.py
+!/deployment/runtime/qwen/examples/qwen_image_21/pbr/inference_offload.py
