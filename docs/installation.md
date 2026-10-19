@@ -92,6 +92,9 @@ The default Qwen-Image material backend uses torch attention and the
 DiffSynth runtime bundled at `deployment/runtime/qwen`, selected automatically.
 Its subprocess uses the active Python environment and the dependencies installed
 above. Packages installed only with `pip --user` are excluded in the subprocess.
+The main inference process still imports user-site packages, so if
+`~/.local/lib/python3.10` holds conflicting versions, run with
+`PYTHONNOUSERSITE=1` to ignore them.
 
 To use another compatible runtime, pass `--qwen-runtime /path/to/qwen-runtime`.
 An optional `--qwen-deps /path/to/dependencies` adds an existing dependency

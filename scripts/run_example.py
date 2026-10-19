@@ -49,7 +49,9 @@ def read_config(path: Path) -> dict:
         if not isinstance(value, str) or not value:
             raise ValueError(f"models.json requires a nonempty {key} path")
         resolved = Path(value).expanduser()
-        config[key] = str(resolved if resolved.is_absolute() else (path.parent / resolved).resolve())
+        # Normalize without following links: cache-backed files link to
+        # opaque blobs, and weight validation needs the logical file name.
+        config[key] = os.path.normpath(resolved if resolved.is_absolute() else path.parent / resolved)
     return config
 
 
