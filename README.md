@@ -58,9 +58,7 @@ Learn more on the [project page](https://supra-3d.github.io/supratex/), or try t
 
 ## Pretrained Models
 
-Our models are available on [Hugging Face](https://huggingface.co/supra3d/supra-tex).
-
-> **Note:** We are actively working to resolve model deployment issues. Until they are resolved, access to the models is temporarily gated: please request access on the [model page](https://huggingface.co/supra3d/supra-tex) and log in with `hf auth login` before downloading. Once the issues are resolved, the models will be openly available without an access request. Results from the current version may be inconsistent and do not reflect the final model quality.
+Our models are openly available on [Hugging Face](https://huggingface.co/supra3d/supra-tex).
 
 | Model | Parameters | Download |
 | --- | --- | --- |
@@ -95,12 +93,11 @@ for `venv` setup and manual installation, and
 
 ## Quick Start
 
-**1. Prepare the models.** Access to the
-[SUPRA-Tex models](https://huggingface.co/supra3d/supra-tex) is temporarily gated
-(see the [note above](#pretrained-models)), and the image-to-3D pipeline also uses
-Meta's [DINOv3](https://huggingface.co/facebook/dinov3-vitl16-pretrain-lvd1689m).
-Request access on both model pages, log in with an approved account, then
-download and assemble all models into `ckpts/ready`:
+**1. Prepare the models.** The [SUPRA-Tex models](https://huggingface.co/supra3d/supra-tex)
+need no access request, but the image-to-3D pipeline also uses Meta's
+[DINOv3](https://huggingface.co/facebook/dinov3-vitl16-pretrain-lvd1689m), which
+requires access approval. Request access on its model page, log in with an
+approved account, then download and assemble all models into `ckpts/ready`:
 
 ```bash
 hf auth login

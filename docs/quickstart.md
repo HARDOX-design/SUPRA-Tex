@@ -40,10 +40,7 @@ See [installation details](installation.md) for manual setup.
 The [project model repository](https://huggingface.co/supra3d/supra-tex) contains
 `pipeline.json`, the completion model, and the material adapter. See
 [model weights](weights.md) for component layouts and external dependencies.
-While we resolve model deployment issues, access to this repository is
-temporarily gated: request access on its model page before preparation. The
-models will be openly available without an access request once these issues
-are resolved.
+It is openly available and needs no access request.
 
 DINOv3 is required even for the default RGBA example and requires the
 [publisher's access approval](https://huggingface.co/facebook/dinov3-vitl16-pretrain-lvd1689m).

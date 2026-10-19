@@ -54,9 +54,7 @@ https://github.com/user-attachments/assets/ecc9e9ec-e91f-4eba-927d-86322796459a
 
 ## 预训练模型
 
-模型已发布至 [Hugging Face](https://huggingface.co/supra3d/supra-tex)。
-
-> **说明：** 我们正在解决模型部署问题。在问题解决前，模型暂时需要申请访问权限：请先在[模型页面](https://huggingface.co/supra3d/supra-tex)申请访问，并通过 `hf auth login` 登录后再下载。问题解决后，模型将直接开放，无需申请访问权限。当前版本的生成结果可能不稳定，不代表最终模型质量。
+模型已在 [Hugging Face](https://huggingface.co/supra3d/supra-tex) 公开发布。
 
 | 模型 | 参数量 | 下载 |
 | --- | --- | --- |
@@ -88,10 +86,9 @@ Ampere、Ada 或 Hopper GPU 安装 FlashAttention-2，Hopper GPU 可安装 Flash
 
 ## 快速开始
 
-**1. 准备模型。** [SUPRA-Tex 模型](https://huggingface.co/supra3d/supra-tex)
-暂时需要申请访问权限（见[上方说明](#预训练模型)），图像生成 3D 流程还使用 Meta 的
-[DINOv3](https://huggingface.co/facebook/dinov3-vitl16-pretrain-lvd1689m)。
-请在这两个模型页面申请访问权限，使用已获批准的账号登录，然后将所有模型下载并整理到 `ckpts/ready`：
+**1. 准备模型。** [SUPRA-Tex 模型](https://huggingface.co/supra3d/supra-tex)无需申请访问权限，
+但图像生成 3D 流程还使用 Meta 的 [DINOv3](https://huggingface.co/facebook/dinov3-vitl16-pretrain-lvd1689m)，
+它需要申请访问权限。请在其模型页面申请访问，使用已获批准的账号登录，然后将所有模型下载并整理到 `ckpts/ready`：
 
 ```bash
 hf auth login
