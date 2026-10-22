@@ -320,8 +320,9 @@ def infer_native(pipe, image, camera: dict, receipt: dict, *, seed: int,
     finally:
         decoder.cpu()
         decoder.low_vram = False
-    # Match native 1024-cascade projection-grid quantization.
-    coords = torch.cat([hr_coords[:, :1], ((hr_coords[:, 1:] + .5) / 512 * 63).round().int()], dim=1).unique(dim=0)
+    # Match training-time latent cell binning: 1024 voxels // 16,
+    # equivalent to 512-grid coordinates // 8 on the 64-cell latent grid.
+    coords = torch.cat([hr_coords[:, :1], ((hr_coords[:, 1:] + .5) / 512 * 64).int()], dim=1).unique(dim=0)
     del slat, hr_coords
     clear_cache()
     cond = pipe.get_proj_cond_shape(pipe.image_cond_model_shape_1024, [image], coords,
