@@ -60,7 +60,10 @@ def main(argv: list[str] | None = None) -> int:
                 parser.error("--back-view-dir validation requires --input-dir")
             from supratex.inference.dual_view import load_back_case
             loaded = load_back_case(args.input_dir, args.back_view_dir)
-            result = {"valid": True, "camera_protocol": loaded["cameras"]["protocol"]}
+            result = {"valid": True, "camera_protocol": loaded["cameras"]["protocol"],
+                      "back_view_review": loaded["back_view_review"],
+                      "requires_review": loaded["back_view_review"]["requires_review"],
+                      "review_changed_since_preparation": loaded["review_changed_since_preparation"]}
         else:
             from supratex.inference.dual_view import validate_result
             result = validate_result(args.work_dir)

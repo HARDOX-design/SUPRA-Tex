@@ -18,6 +18,7 @@ MODEL = "gpt-6-astra"
 EFFORT = "ultra"
 GENERATION_TOOL = "image_gen.imagegen"
 SCHEMA = "supratex.backview.harness.v1"
+INFERENCE_REVIEW_STATUSES = frozenset({"acceptable", "needs_review"})
 INPUT_FILES = {
     "front_rgb": "front_rgb.png",
     "back_normal": "back_normal.png",
@@ -277,10 +278,35 @@ def generation_current(root: Path, task: dict) -> bool:
         return False
 
 
-def current_review(root: Path, task: dict) -> dict | None:
+def current_review_snapshot(root: Path, task: dict) -> dict | None:
+    """Require a review of the current processed files and loaded policy."""
     output = checked_path(root, task["output_dir"])
     try:
-        review = read_json(output / "visual_review.json")
+        source = output / "visual_review.json"
+        contents = source.read_bytes()
+        review = json.loads(contents)
+        if not isinstance(review, dict):
+            return None
+        defects = review.get("defects")
+        if not isinstance(defects, list) or any(
+                not isinstance(defect, dict) or defect.get("severity") not in ("minor", "major")
+                or not isinstance(defect.get("description"), str) or not defect["description"].strip()
+                for defect in defects):
+            return None
+        severities = {defect["severity"] for defect in defects}
+        if (("major" in severities and review.get("status") != "needs_regeneration")
+                or (defects and review.get("status") == "acceptable")):
+            return None
+        from .postprocess import REVIEWED_FILES, SCHEMA_VERSION, policy_sha256
+        policy = policy_sha256()
+        alignment = read_json(output / "alignment.json")
+        processed = {name: sha(output / name) for name in REVIEWED_FILES}
+        if (review.get("postprocessing_reviewed") is not True
+                or review.get("postprocessing_policy_sha256") != policy
+                or review.get("reviewed_processed_file_sha256") != processed
+                or alignment.get("schema_version") != SCHEMA_VERSION
+                or alignment.get("postprocessing_policy_sha256") != policy):
+            return None
         required = ("rear_view", "geometry", "materials", "text_and_patterns", "lighting_and_brightness")
         if (review.get("reviewed_raw_sha256") == sha(output / "raw.png")
                 and review.get("case_id") == task["case_id"]
@@ -288,17 +314,24 @@ def current_review(root: Path, task: dict) -> dict | None:
                 and all(review.get(k) for k in required)
                 and isinstance(review.get("defects"), list)
                 and review.get("interior_pixel_alignment_proven") is False):
-            return review
-    except (OSError, ValueError, KeyError):
+            return {"status": review["status"], "requires_review": review["status"] == "needs_review",
+                    "source": str(source), "sha256": hashlib.sha256(contents).hexdigest(), "review": review}
+    except (OSError, ValueError, KeyError, TypeError):
         pass
     return None
 
 
+def current_review(root: Path, task: dict) -> dict | None:
+    snapshot = current_review_snapshot(root, task)
+    return snapshot["review"] if snapshot is not None else None
+
+
 def validate_result(run_root: Path, case_id: str = "input") -> dict:
-    """Accept only current, auditable, visually accepted 1024-square observations."""
+    """Gate inference on integrity and eligibility, without upgrading visual grades."""
     root = Path(run_root).resolve()
     result = {"case_id": case_id, "valid": False, "records_valid": False,
               "status": "invalid", "errors": [], "warnings": [], "back_rgba": None,
+              "requires_review": False, "back_view_review": None,
               "interior_pixel_alignment_proven": False}
     errors = result["errors"]
     try:
@@ -356,13 +389,16 @@ def validate_result(run_root: Path, case_id: str = "input") -> dict:
             mask = np.asarray(image.convert("L"))
         if alpha.shape != mask.shape or not np.array_equal(alpha, mask):
             errors.append("Final alpha must equal the original renderer mask exactly")
-        review = current_review(root, task)
-        if review is None:
+        snapshot = current_review_snapshot(root, task)
+        if snapshot is None:
             errors.append("Visual review is missing, incomplete, or stale")
         else:
-            result["status"] = review["status"]
-            if review["status"] != "acceptable":
-                result["warnings"].append("Visual review requires attention; the observation is not accepted for inference")
+            result.update(status=snapshot["status"], requires_review=snapshot["requires_review"],
+                          back_view_review=snapshot)
+            if snapshot["requires_review"]:
+                result["warnings"].append("Visual review is needs_review; inference is allowed only if all integrity checks pass. Review label and defects are retained.")
+            elif snapshot["status"] == "needs_regeneration":
+                result["warnings"].append("Visual review requires regeneration; the observation is not accepted for inference")
         status = read_json(output / "worker_status.json")
         if status.get("run_success") is not True or status.get("exit_code") != 0:
             errors.append("The required Astra worker did not complete successfully")
@@ -386,7 +422,7 @@ def validate_result(run_root: Path, case_id: str = "input") -> dict:
             errors.append("Worker invocation is not bound to the current case inputs and prompt")
         result["back_rgba"] = str(output / "back_rgba.png")
         result["records_valid"] = not errors
-        result["valid"] = not errors and result["status"] == "acceptable"
+        result["valid"] = not errors and result["status"] in INFERENCE_REVIEW_STATUSES
         if result["records_valid"]:
             result.update(worker_model=provenance["worker_model"],
                           worker_reasoning_effort=provenance["worker_reasoning_effort"],
@@ -399,4 +435,5 @@ def validate_result(run_root: Path, case_id: str = "input") -> dict:
                           input_sha256=task["input_sha256"])
     except (OSError, ValueError, KeyError, TypeError, IndexError) as exc:
         errors.append(f"{type(exc).__name__}: {exc}")
+        result.update(valid=False, records_valid=False)
     return result

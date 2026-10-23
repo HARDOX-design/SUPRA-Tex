@@ -134,8 +134,11 @@ python -m supratex.backview.harness report --run-root work/back_generation
 ```
 
 Inspect `work/back_generation/report/index.html`. A result needs successful
-worker execution and an accepted visual review for the selected image. An
-image file alone is insufficient. The default case ID is `input`; if using
+worker execution, all provenance and output checks, and a current `acceptable`
+or `needs_review` visual review for the selected image. `needs_review` permits
+the next stage without changing the review label or removing its defects.
+`needs_regeneration`, missing or stale reviews, and hard-check failures remain
+blocked. An image file alone is insufficient. The default case ID is `input`; if using
 `--case`, keep it consistent across generation and material preparation.
 
 ### 4. Prepare back material maps
@@ -151,6 +154,14 @@ python -m supratex.backview validate \
 This stage selects the material backend and model artifacts recorded for the
 front. It preserves the generated image, applies the rendered silhouette,
 and writes matching condition images, material maps, and validation metadata.
+The `back_view_review` metadata retains the original visual grade, review flag,
+defects, and review source/hash for follow-up iterations.
+Material preparation keeps its historical review snapshot. A new completion run
+revalidates the current review and records that snapshot without overwriting the
+preparation record. If the review changes during completion, final publication
+stops; a later review change makes a newly recorded completion snapshot stale.
+Legacy records without a snapshot use the current review and are identified as
+not having a recorded review snapshot.
 
 ### 5. Complete and validate the mesh
 
@@ -164,8 +175,10 @@ python -m supratex.backview validate --work-dir work/dual_view
 Front observations win overlap. Back-only observations extend the visible
 material set, and completion runs once. Texture reprojection then processes
 the front and back views while preserving front-protected texels.
-`receipt.json` records the final result and its validation status. Failed
-checks leave intermediate files and stop final output publication.
+`receipt.json` records the final result and its validation status separately from
+the retained `back_view_review` snapshot. A successful result can still carry
+`needs_review`; execution success is not a clean visual rating. Failed checks
+leave intermediate files and stop final output publication.
 
 ## Resume an interrupted run
 
@@ -176,7 +189,8 @@ python -m supratex.backview.harness run \
   --run-root work/back_generation --execute
 ```
 
-Add `--retry-review` to request a new attempt after a rejected visual review.
+Add `--retry-review` to request a new attempt for either `needs_review` or
+`needs_regeneration`, including eligible results retained for a later iteration.
 Otherwise recovery can finish a missing review without requesting a new image.
 After generation succeeds, run material preparation into a new output directory
 and texturing into a fresh work directory. Full `infer.py` does not resume a

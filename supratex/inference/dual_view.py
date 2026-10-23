@@ -115,6 +115,11 @@ def load_back_case(input_dir: str | Path, back_view_dir: str | Path) -> dict[str
             or current_generation.get("back_rgba_sha256") != generation["back_rgba_sha256"]
             or current_generation.get("cameras_sha256") != generation["cameras_sha256"]):
         raise ValueError("the original generation evidence is missing, changed, or no longer accepted")
+    # Keep the preparation receipt as history, but use the latest eligible review
+    # for this run. Legacy receipts have no snapshot to compare against.
+    review = current_generation["back_view_review"]
+    prepared_review = generation.get("back_view_review")
+    review_changed = prepared_review != review if prepared_review is not None else None
     prepare = json.loads((back / "prepare.json").read_text(encoding="utf-8"))
     if (prepare.get("status") != "complete" or prepare.get("source_sha256") != digest(back / "back_rgba.png")
             or prepare.get("condition_rgba_sha256") != digest(back / "condition_rgba.png")
@@ -129,7 +134,8 @@ def load_back_case(input_dir: str | Path, back_view_dir: str | Path) -> dict[str
     with Image.open(back / "mra.png") as image:
         mra = image.copy()
     return {"rgba": rgba, "albedo": albedo, "mra": mra, "mask": mask,
-            "cameras": cameras, "root": back, "material": materials[1], "generation": generation}
+            "cameras": cameras, "root": back, "material": materials[1], "generation": generation,
+            "back_view_review": review, "review_changed_since_preparation": review_changed}
 
 
 def trusted_mask(rgba: Image.Image) -> torch.Tensor:
@@ -246,7 +252,14 @@ def validate_result(work_dir: str | Path) -> dict[str, Any]:
         if isinstance(value, bool) or not isinstance(value, (float, int)) or not math.isfinite(value) or not threshold <= value <= 1:
             raise ValueError(f"dual observation gate failed: {key}")
     front, back = Path(receipt["front_input"]), Path(receipt["back_input"])
-    load_back_case(front, back)
+    loaded = load_back_case(front, back)
+    review = loaded["back_view_review"]
+    snapshot_recorded = "back_view_review" in receipt or "back_view_review" in texture
+    if snapshot_recorded:
+        if receipt.get("back_view_review") != texture.get("back_view_review"):
+            raise ValueError("texture and final receipts disagree on back-view review")
+        if receipt.get("back_view_review") != review:
+            raise ValueError("back-view review changed after completion; the recorded snapshot is stale")
     bindings = {"geometry_sha256": front / "geometry.pt", "cameras_sha256": back / "cameras.json",
                 "front_material_receipt_sha256": front / "material_receipt.json",
                 "back_material_receipt_sha256": back / "material_receipt.json"}
@@ -265,4 +278,6 @@ def validate_result(work_dir: str | Path) -> dict[str, Any]:
         raise ValueError("the stitched mesh and published copy do not match their receipts")
     return {"valid": True, "protocol": PROTOCOL, "camera_protocol": CAMERA_PROTOCOL,
             "output": str(published), "receipt": str(work / "receipt.json"),
+            "back_view_review": review, "requires_review": review["requires_review"],
+            "review_snapshot_recorded": snapshot_recorded,
             "candidate_19_phase_checked": True, "stitched_19_phase_checked": False}

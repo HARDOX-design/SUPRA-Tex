@@ -8,7 +8,21 @@ import os
 from pathlib import Path
 from urllib.parse import quote
 
-from .core import checked_path, load_tasks, read_json, sha, validate_result, write_json
+from .core import checked_path, load_tasks, sha, validate_result, write_json
+
+
+def _review_counts(records: list[dict]) -> dict:
+    """Separate per-case eligibility from the original visual review grades."""
+    visual = Counter(row["status"] for row in records)
+    return {
+        "accepted": sum(row["valid"] for row in records),
+        "accepted_acceptable": sum(row["valid"] and row["status"] == "acceptable" for row in records),
+        "accepted_needs_review": sum(row["valid"] and row["status"] == "needs_review" for row in records),
+        "blocked": sum(not row["valid"] for row in records),
+        "needs_review": visual["needs_review"],
+        "needs_review_cases": [row["case_id"] for row in records if row["status"] == "needs_review"],
+        "visual_status_counts": dict(sorted(visual.items())),
+    }
 
 
 def audit_run(root: Path) -> dict:
@@ -23,7 +37,7 @@ def audit_run(root: Path) -> dict:
     report = {"case_count": len(records), "records_valid": all(r["records_valid"] for r in records) and not duplicates,
               "all_accepted": all(r["valid"] for r in records) and not duplicates,
               "duplicate_raw_hashes": duplicates, "cases": records,
-              "interior_pixel_alignment_proven": False}
+              "interior_pixel_alignment_proven": False, **_review_counts(records)}
     write_json(root / "batch_validation.json", report)
     return report
 
@@ -63,8 +77,14 @@ def build_report(root: Path) -> Path:
             ("provenance.json", "Generation provenance"), ("worker_status.json", "Astra worker completion"),
             ("failure.json", "Generation failure")))
         details += record(checked_path(root, task["cameras"]), "Original camera metadata")
-        accepted = "Accepted for inference" if status["valid"] else "Not accepted for inference"
-        cards.append(f'<article data-case="{escape(case_id, quote=True)}"><h2>{escape(case_id)}</h2>'
+        if not status["valid"]:
+            accepted = "Blocked for inference"
+        elif status["status"] == "needs_review":
+            accepted = "Allowed for inference · Review required"
+        else:
+            accepted = "Allowed for inference · Visually acceptable"
+        cards.append(f'<article data-case="{escape(case_id, quote=True)}" '
+                     f'data-status="{escape(status["status"], quote=True)}"><h2>{escape(case_id)}</h2>'
                      f'<p><strong>{accepted}</strong> · Visual status: {escape(status["status"])}</p>'
                      f'<div class="images">{images}</div><ul>{notes}</ul>{details}</article>')
     html = """<!doctype html>
@@ -77,25 +97,41 @@ article{padding:22px;background:#19242f;border:1px solid #344554;border-radius:1
 .images{display:grid;grid-template-columns:repeat(5,minmax(0,1fr));gap:12px}figure{margin:0;min-width:0}
 figcaption{font-size:12px;margin:6px 0}img{width:100%;aspect-ratio:1;object-fit:contain;background:#e7e9ec}
 details{margin-top:12px}summary{cursor:pointer}pre{white-space:pre-wrap;overflow-wrap:anywhere;background:#0c1219;padding:16px}
-.note{background:#22313f;padding:16px;border-left:3px solid #8ad6d0}input{padding:10px;width:280px;max-width:80%}
+.note{background:#22313f;padding:16px;border-left:3px solid #8ad6d0}input,select{padding:10px;max-width:80%}input{width:280px}
 @media(max-width:850px){.images{grid-template-columns:repeat(2,minmax(0,1fr))}body{padding:16px}}
 </style><main><h1>SupraTex back-view generation review</h1>
 <p>Compare the original inputs, actual generation, permitted postprocessing, and recorded Astra review.</p>
 <p class="note">GPT-6 Astra orchestrates the built-in image tool; the underlying synthesis model is undisclosed.
 Final alpha is constrained to the renderer mask. This does not prove internal pixel correspondence.
-Stale or incomplete artifacts are excluded from final previews. Camera geometry is not inferred from placeholder metadata.</p>
+Stale or incomplete artifacts are excluded from final previews. Camera geometry is not inferred from placeholder metadata.
+Inference eligibility is separate from visual quality: needs_review may continue after all hard checks pass,
+while its review label and defects remain recorded for follow-up.</p>
 """
-    html += (f'<p>Cases: {audit["case_count"]} · Accepted: {sum(row["valid"] for row in audit["cases"])}'
+    html += (f'<p>Cases: {audit["case_count"]} · Allowed for inference: {audit["accepted"]}'
+             f' (acceptable: {audit["accepted_acceptable"]}; needs_review: {audit["accepted_needs_review"]})'
+             f' · Blocked: {audit["blocked"]}</p>'
+             f'<p>Visual needs_review labels: {audit["needs_review"]} (including blocked cases)'
+             f' · Batch audit: {"passed" if audit["all_accepted"] else "blocked"}'
+             f' · Duplicate raw hashes: {len(audit["duplicate_raw_hashes"])}'
              f' · Audit: <a href="../batch_validation.json">full JSON</a></p>'
-             '<label>Filter by case ID <input id="filter" type="search"></label>' + "".join(cards))
+             '<label>Filter by case ID <input id="filter" type="search"></label> '
+             '<label>Visual status <select id="status-filter"><option value="">All</option>'
+             '<option value="acceptable">acceptable</option><option value="needs_review">needs_review</option>'
+             '<option value="needs_regeneration">needs_regeneration</option><option value="invalid">invalid</option>'
+             '</select></label>' + "".join(cards))
     html += """</main><script>
-document.querySelector('#filter').addEventListener('input',function(){
-  const query=this.value.toLowerCase();
-  for(const item of document.querySelectorAll('article'))item.hidden=!item.dataset.case.toLowerCase().includes(query);
-});</script></html>
+function filterCases(){
+  const query=document.querySelector('#filter').value.toLowerCase();
+  const status=document.querySelector('#status-filter').value;
+  for(const item of document.querySelectorAll('article')){
+    item.hidden=!item.dataset.case.toLowerCase().includes(query)||(status!==''&&item.dataset.status!==status);
+  }
+}
+document.querySelector('#filter').addEventListener('input',filterCases);
+document.querySelector('#status-filter').addEventListener('change',filterCases);
+</script></html>
 """
     destination = report_dir / "index.html"
     destination.write_text(html, encoding="utf-8")
-    write_json(report_dir / "summary.json", {"case_count": audit["case_count"],
-               "accepted": sum(row["valid"] for row in audit["cases"]), "records_valid": audit["records_valid"]})
+    write_json(report_dir / "summary.json", {key: value for key, value in audit.items() if key != "cases"})
     return destination

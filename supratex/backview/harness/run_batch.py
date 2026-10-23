@@ -25,8 +25,9 @@ def run_generation(run_root: Path, *, workers: int = 1, execute: bool = False,
                    case_ids: list[str] | None = None, retry_review: bool = False) -> dict:
     """Plan by default; execution requires Codex with Astra and built-in image_gen.
 
-    A completed but visually rejected observation remains unaccepted. Corrections
-    require retry_review=True; resume never silently spends another generation.
+    A completed needs_review observation may continue while retaining its label;
+    needs_regeneration remains blocked. Corrections to either require
+    retry_review=True; resume never silently spends another generation.
     """
     root = Path(run_root).resolve()
     if not 1 <= workers <= 3:
@@ -98,6 +99,14 @@ def run_generation(run_root: Path, *, workers: int = 1, execute: bool = False,
             assignment = {"HARNESS_ROOT": str(root), "CASE_IDS": [task["case_id"]],
                           "PYTHON_EXECUTABLE": sys.executable, "START_ATTEMPT": next_attempt}
             prompt = worker_prompt + "\nASSIGNMENT\n" + json.dumps(assignment, ensure_ascii=False) + "\n"
+            # Also applies to review recovery using older immutable prompt snapshots.
+            prompt += ("CURRENT REVIEW CONTRACT: after postprocessing, inspect back_rgba.png, back_rgb.png, "
+                       "overlay.png and alignment.json. Only then set postprocessing_reviewed=true, copy "
+                       "validation.json's processed_file_sha256 to reviewed_processed_file_sha256 and its "
+                       "postprocessing_policy_sha256 unchanged into visual_review.json. Each defect must have "
+                       "severity=minor|major and a concrete description; acceptable has no recorded defects, "
+                       "minor defects require needs_review and any major defect requires needs_regeneration. "
+                       "Never bind an existing review to changed outputs without inspecting them again.\n")
             if review_only:
                 prompt += ("REVIEW-ONLY RECOVERY: do not call image_gen, do not register a new candidate, "
                            "and do not change the selected raw. Inspect the existing inputs and raw, run "
@@ -144,7 +153,9 @@ def run_generation(run_root: Path, *, workers: int = 1, execute: bool = False,
         with ThreadPoolExecutor(max_workers=workers) as pool:
             summary["statuses"] = list(pool.map(run, pending))
         for task in tasks:
-            process(task, root)
+            # Do not rewrite artifacts already inspected and bound by the worker.
+            if current_review(root, task) is None:
+                process(task, root)
         summary["results"] = [validate_result(root, task["case_id"]) for task in tasks]
         summary["success"] = (not blocked and all(s["run_success"] for s in summary["statuses"])
                               and all(r["valid"] for r in summary["results"]))

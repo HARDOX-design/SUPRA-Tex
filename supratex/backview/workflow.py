@@ -77,7 +77,7 @@ def prepare_back_material(front_input_dir: Path, pack_dir: Path, run_root: Path,
     front_receipt = validate_material_receipt(front_input_dir)
     report = validate_result(run_root, case_id=case_id)
     if report.get("valid") is not True:
-        raise ValueError(f"generated back did not pass integrity and visual review: {report}")
+        raise ValueError(f"generated back did not pass integrity and inference eligibility checks: {report}")
     for name in ("cameras.json", "back_mask.png", "back_normal.png", "front_rgb.png"):
         if digest(run_root / "inputs" / case_id / name) != digest(pack_dir / name):
             raise ValueError(f"harness input snapshot differs from this normal pack: {name}")
@@ -90,7 +90,8 @@ def prepare_back_material(front_input_dir: Path, pack_dir: Path, run_root: Path,
     shutil.copytree(pack_dir, output_dir)
     shutil.copyfile(generated, output_dir / "back_rgba.png")
     record = {"status": "running", "stage": "prepare", "front_input": str(front_input_dir),
-              "generation_run": str(run_root), "case_id": case_id}
+              "generation_run": str(run_root), "case_id": case_id,
+              "back_view_review": report["back_view_review"]}
     write_json(output_dir / "back_material_run.json", record)
     try:
         prepare_condition(output_dir / "back_rgba.png", output_dir, case_id=case_id)
@@ -99,7 +100,8 @@ def prepare_back_material(front_input_dir: Path, pack_dir: Path, run_root: Path,
                       "generation_tool": report.get("generation_tool"),
                       "back_rgba_sha256": digest(output_dir / "back_rgba.png"),
                       "cameras_sha256": digest(output_dir / "cameras.json"),
-                      "run_root": str(run_root), "case_id": case_id, "validation": report}
+                      "run_root": str(run_root), "case_id": case_id, "validation": report,
+                      "back_view_review": report["back_view_review"]}
         write_json(output_dir / "generation_receipt.json", generation)
         camera = view_camera(cameras, "back")
         camera = {key: value.tolist() if hasattr(value, "tolist") else value for key, value in camera.items()}

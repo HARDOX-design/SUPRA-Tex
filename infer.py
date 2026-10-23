@@ -322,10 +322,19 @@ def run(args: argparse.Namespace) -> Path:
         receipt.update(stage="completion", frontend=result)
         record()
         print(f"[2/2] Surface observations, PBR completion, GLB export -> {output}", flush=True)
-        run_completion(input_dir=handoff, output=output, model_config=config, checkpoint=checkpoint,
-                       trellis_root=encoders, seed=args.seed, texture_size=args.texture_size,
-                       decimation_target=args.decimation_target, texture_format=args.texture_format, gutter=args.gutter,
-                       remove_floaters=args.remove_floaters, **optional)
+        try:
+            run_completion(input_dir=handoff, output=output, model_config=config, checkpoint=checkpoint,
+                           trellis_root=encoders, seed=args.seed, texture_size=args.texture_size,
+                           decimation_target=args.decimation_target, texture_format=args.texture_format, gutter=args.gutter,
+                           remove_floaters=args.remove_floaters, **optional)
+        finally:
+            # Copy the snapshot actually consumed by completion, including failed
+            # runs, rather than the possibly older material-preparation review.
+            completion_record = work / "dual_view" / "receipt.json"
+            if args.dual_view and completion_record.is_file():
+                completion = json.loads(completion_record.read_text(encoding="utf-8"))
+                receipt["back_view_review"] = completion["back_view_review"]
+                receipt["review_changed_since_preparation"] = completion["review_changed_since_preparation"]
         if not output.is_file() or output.stat().st_size == 0:
             raise RuntimeError(f"completion did not emit a nonempty GLB: {output}")
     except Exception as error:

@@ -18,7 +18,9 @@ from scipy.ndimage import binary_erosion, distance_transform_edt
 
 
 RESAMPLE = Image.Resampling
-SCHEMA_VERSION = 1
+SCHEMA_VERSION = 2
+REVIEWED_FILES = ("back_rgba.png", "back_rgb.png", "overlay.png", "alignment.json")
+_LOADED_POLICY_SHA256 = hashlib.sha256(Path(__file__).read_bytes()).hexdigest()
 
 
 def read_json(path: Path):
@@ -40,6 +42,13 @@ def sha256(path: Path) -> str:
         for chunk in iter(lambda: stream.read(1024 * 1024), b""):
             digest.update(chunk)
     return digest.hexdigest()
+
+
+def policy_sha256() -> str:
+    """Identify the loaded policy; a source edit requires a fresh interpreter."""
+    if sha256(Path(__file__)) != _LOADED_POLICY_SHA256:
+        raise ValueError("Postprocessing policy changed after import; restart before processing or reviewing")
+    return _LOADED_POLICY_SHA256
 
 
 def mask_image(path: Path) -> Image.Image:
@@ -275,6 +284,7 @@ def process(task: dict, run_root: Path) -> dict:
         write_json(output / "validation.json", validation)
         return validation
     try:
+        policy = policy_sha256()
         normal_path = resolve_path(task["back_normal"], run_root)
         front_path = resolve_path(task["front_rgb"], run_root)
         mask_path = resolve_path(task["back_mask"], run_root)
@@ -304,12 +314,16 @@ def process(task: dict, run_root: Path) -> dict:
             if transform["applied"]:
                 proposed = affine(standardized, transform["scale"], transform["dx_px"], transform["dy_px"])
                 proposed_metrics = mask_metrics(np.asarray(proposed.getchannel("A")) >= 128, target)
-                # Thumbnail optimisation must also improve the native-resolution silhouette.
-                if proposed_metrics["iou"] > raw_metrics["iou"]:
+                # A better silhouette must not reduce supported target texture.
+                coverage_decreased = proposed_metrics["target_coverage"] < raw_metrics["target_coverage"]
+                if proposed_metrics["iou"] > raw_metrics["iou"] and not coverage_decreased:
                     registered, preclip_metrics = proposed, proposed_metrics
                 else:
                     transform["rejected_proposal"] = {k: transform[k] for k in ("scale", "dx_px", "dy_px")}
-                    transform.update(scale=1.0, dx_px=0.0, dy_px=0.0, applied=False, rejection_reason="no_native_resolution_iou_improvement")
+                    transform["rejected_proposal_metrics"] = proposed_metrics
+                    transform.update(scale=1.0, dx_px=0.0, dy_px=0.0, applied=False,
+                                     rejection_reason="target_coverage_decreased" if coverage_decreased
+                                     else "no_native_resolution_iou_improvement")
 
         # Preserve straight RGB wherever the generator supplied any alpha.
         # Baking source alpha into RGB here would apply coverage a second time
@@ -337,6 +351,7 @@ def process(task: dict, run_root: Path) -> dict:
 
         alignment = {
             "schema_version": SCHEMA_VERSION,
+            "postprocessing_policy_sha256": policy,
             "case_id": case_id,
             "raw_sha256": raw_digest,
             "front_rgb_sha256": sha256(front_path),
@@ -372,6 +387,8 @@ def process(task: dict, run_root: Path) -> dict:
             ],
         }
         write_json(output / "alignment.json", alignment)
+        if policy_sha256() != policy:
+            raise ValueError("Postprocessing policy changed during processing")
         validation.update(
             status="needs_visual_review", message="Postprocessing complete; internal geometric alignment and text legibility remain unproven.",
             dimensions_match_target=True,
@@ -381,6 +398,8 @@ def process(task: dict, run_root: Path) -> dict:
             raw_sha256=alignment["raw_sha256"],
             visual_review_present=(output / "visual_review.json").is_file(),
             provenance_present=(output / "provenance.json").is_file(),
+            postprocessing_policy_sha256=policy,
+            processed_file_sha256={name: sha256(output / name) for name in REVIEWED_FILES},
         )
     except Exception as exc:
         validation.update(status="error", message=f"{type(exc).__name__}: {exc}")

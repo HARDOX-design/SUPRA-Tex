@@ -13,6 +13,21 @@ dist/
 
 # Local models, datasets, runs, and credentials.
 /ckpts/
+/ckpt/
+/checkpoints/
+/weights/
+/supra-tex-weights/
+/.cache/huggingface/
+
+# Keep model binaries out of Git even when saved outside the directories above.
+*.safetensors
+*.ckpt
+*.pt
+*.pth
+*.bin
+*.onnx
+*.gguf
+
 /external-src/
 /outputs/
 /data/

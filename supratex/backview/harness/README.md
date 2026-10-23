@@ -41,8 +41,9 @@ preserve all attempts, actual tool returns, prompts, and visual reviews.
 Terminal policy refusals and missing capabilities are recorded as failures.
 
 Completed cases are reused on resume. A missing or stale review triggers
-review-only recovery without a new generation. Visually rejected results
-remain rejected; request a correction explicitly with `--retry-review`.
+review-only recovery without a new generation. `needs_review` may continue after
+all hard checks pass, while `needs_regeneration` remains blocked. Request a new
+attempt for either status explicitly with `--retry-review`.
 A failed worker cannot pass merely because an older image exists.
 
 ## Artifacts and acceptance
@@ -61,15 +62,45 @@ and event logs, and worker completion records. Postprocessing adds:
 
 The report at `report/index.html` is offline and in English. It hides stale
 processed images and links complete JSON audit records. `validate_result`
-accepts a result only when all recorded inputs, prompts, attempts, outputs,
-worker completion, and the current `acceptable` visual review agree. A
-completed generation with `needs_review` or `needs_regeneration` remains
-unaccepted for inference. Logs establish provenance and detect stale or changed
-artifacts; local records are not cryptographic attestations of a remote service.
+allows inference only when all recorded inputs, prompts, attempts, outputs,
+worker completion, and the current visual review agree. Both `acceptable` and
+`needs_review` may continue after those checks pass; `needs_regeneration`, a
+missing or stale review, and any hard-check failure block inference.
+
+Eligibility does not change the visual grade. The original `visual_review.json`
+and its defects are preserved. Validation and downstream receipts retain a
+`back_view_review` snapshot with its status, `requires_review` flag, source path,
+SHA-256, and original review. Reports distinguish allowed acceptable cases,
+allowed needs_review cases, and blocked cases. `accepted` remains the per-case
+eligible count, while `needs_review` and `needs_review_cases` identify all cases
+carrying that visual label, including cases blocked by hard checks. A duplicate
+raw-image hash can still block the batch audit independently of per-case counts.
+Logs establish provenance and detect stale or changed artifacts; local records
+are not cryptographic attestations of a remote service.
+
+Defects are objects with `severity` (`minor` or `major`) and a concrete
+`description`. `acceptable` has no recorded defects; minor defects require
+`needs_review`, and any major defect requires `needs_regeneration`. Contradictory
+or malformed reviews are ineligible without silently changing their grade.
+
+The reviewer must inspect the actual `back_rgba.png`, `back_rgb.png`, `overlay.png`
+and `alignment.json`. After inspection, the review records
+`postprocessing_reviewed: true`, `reviewed_processed_file_sha256` (copied from
+`validation.json`'s `processed_file_sha256`) and `postprocessing_policy_sha256`.
+These hashes bind all four processed files and the loaded postprocessor source,
+in addition to `reviewed_raw_sha256`. Changed processed files or policy invalidate
+the current review even if the raw image is unchanged. Resume preserves already
+reviewed files instead of postprocessing them again. Legacy reviews without these
+bindings are preserved but require postprocessing and review-only recovery; they
+are never automatically rebound or upgraded, and recovery does not generate a new
+image. Existing input and prompt snapshots remain unchanged.
 
 Postprocessing standardizes the canvas and, only when native alpha is
 meaningful, estimates a uniform scale and translation. Scale is limited to
-0.65–1.35 and translation to 15% of each canvas dimension. It does not rotate,
+0.65–1.35 and translation to 15% of each canvas dimension. A proposed transform
+must improve native-resolution silhouette IoU without decreasing target coverage;
+otherwise the original framing is retained and the rejected parameters, metrics
+and reason are saved in `alignment.json`. It does not rotate,
 flip, deform individual parts, inpaint texture, or adjust brightness. The
 original target mask is then applied. Matching final alpha proves the mask
 constraint, **not** internal surface correspondence. The latter remains a

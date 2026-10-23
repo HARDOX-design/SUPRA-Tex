@@ -203,7 +203,9 @@ in five stages, each a separate command in
    the opposite view, as a normal map and silhouette mask that share the same
    rasterization.
 3. **Back image.** An image generator paints a back view that follows the normal
-   pack, and a visual review accepts or rejects it. Our implementation runs
+   pack, and a visual review labels it. `acceptable` and `needs_review` may
+   continue after all hard checks pass; `needs_regeneration` remains blocked.
+   Review labels and defects are retained in downstream records. Our implementation runs
    GPT-6 Astra with its built-in image generation tool through the external Codex
    CLI; this is the only stage outside this repository.
 4. **Back materials.** The accepted image is cut to the rendered silhouette, and

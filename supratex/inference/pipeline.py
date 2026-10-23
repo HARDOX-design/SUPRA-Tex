@@ -632,6 +632,8 @@ def run_completion(*, input_dir: str | Path, output: str | Path, model_config: s
     receipt = {"protocol": PROTOCOL, "camera_protocol": CAMERA_PROTOCOL, "view": "dual",
                "status": "running", "stage": "texture", "front_input": str(front_root),
                "back_input": str(back_root), "output": str(output),
+               "back_view_review": back["back_view_review"],
+               "review_changed_since_preparation": back["review_changed_since_preparation"],
                "checkpoint": str(Path(checkpoint).expanduser().resolve()),
                "model_config": str(Path(model_config).expanduser().resolve()),
                "seed": seed, "sampler": "Euler", "steps": 25,
@@ -664,7 +666,9 @@ def run_completion(*, input_dir: str | Path, output: str | Path, model_config: s
             final, validation, refine_error = None, None, error
         # Model and reprojection work can be long-running. Revalidate the
         # original inputs and generation evidence before publishing the mesh.
-        load_back_case(front_root, back_root)
+        current_back = load_back_case(front_root, back_root)
+        if current_back["back_view_review"] != receipt["back_view_review"]:
+            raise RuntimeError("back-view review changed during dual-view completion; rerun with the current review")
         bindings = {"geometry_sha256": front_root / "geometry.pt",
                     "cameras_sha256": back_root / "cameras.json",
                     "front_material_receipt_sha256": front_root / "material_receipt.json",

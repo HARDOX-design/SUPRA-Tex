@@ -28,7 +28,8 @@ def main(argv=None) -> int:
             sub.add_argument("--timeout", type=int, default=1800)
             sub.add_argument("--codex", default="codex")
             sub.add_argument("--case", action="append")
-            sub.add_argument("--retry-review", action="store_true")
+            sub.add_argument("--retry-review", action="store_true",
+                             help="Request a new attempt for needs_review or needs_regeneration results")
         elif name == "prompt":
             sub.add_argument("--refine", action="store_true")
         elif name == "register":
