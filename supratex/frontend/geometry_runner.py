@@ -301,7 +301,7 @@ def infer_native(pipe, image, camera: dict, receipt: dict, *, seed: int,
         selected, report = initial_mesh_scale, {"enabled": False, "probes": [], "stop_reason": "disabled"}
     condition["mesh_scale"] = selected
     receipt.update(scale_search=report, optimized_mesh_scale=selected, final_generation_camera=dict(condition),
-                   uses_dense_check_model=False, final_sparse_structure_resolution=32, resolution=1024)
+                   uses_dense_check_model=False, final_sparse_structure_resolution=32)
     print(f"[mesh_scale] selected={selected:.6f}, stop={report['stop_reason']}, probes={len(report['probes'])}", flush=True)
     torch.manual_seed(seed)
     cond = pipe.get_proj_cond_ss([image], **condition)
@@ -320,17 +320,33 @@ def infer_native(pipe, image, camera: dict, receipt: dict, *, seed: int,
     finally:
         decoder.cpu()
         decoder.low_vram = False
-    # Match training-time latent cell binning: 1024 voxels // 16,
-    # equivalent to 512-grid coordinates // 8 on the 64-cell latent grid.
-    coords = torch.cat([hr_coords[:, :1], ((hr_coords[:, 1:] + .5) / 512 * 64).int()], dim=1).unique(dim=0)
-    del slat, hr_coords
+    # Match Pixal3D's 1536 cascade, including its quantization and token fallback.
+    actual_hr_resolution = 1536
+    max_num_tokens = 49152
+    while True:
+        grid_res = actual_hr_resolution // 16
+        quant_coords = torch.cat([
+            hr_coords[:, :1],
+            ((hr_coords[:, 1:] + .5) / 512 * (grid_res - 1)).round().int(),
+        ], dim=1)
+        coords = quant_coords.unique(dim=0)
+        num_tokens = coords.shape[0]
+        if num_tokens < max_num_tokens or actual_hr_resolution == 1024:
+            break
+        actual_hr_resolution -= 128
+    actual_grid_res = actual_hr_resolution // 16
+    receipt.update(requested_resolution=1536, resolution=actual_hr_resolution,
+                   max_num_tokens=max_num_tokens, num_tokens=int(num_tokens))
+    print(f"[geometry] requested=1536, resolution={actual_hr_resolution}, tokens={num_tokens}, "
+          f"max_num_tokens={max_num_tokens}", flush=True)
+    del slat, hr_coords, quant_coords
     clear_cache()
     cond = pipe.get_proj_cond_shape(pipe.image_cond_model_shape_1024, [image], coords,
-                                   grid_resolution_override=64, **condition)
+                                   grid_resolution_override=actual_grid_res, **condition)
     slat = pipe.sample_shape_slat(cond, pipe.models["shape_slat_flow_model_1024"], coords, sampler_shape)
     del cond, coords
     clear_cache()
-    meshes, _ = pipe.decode_shape_slat(slat, 1024)
+    meshes, _ = pipe.decode_shape_slat(slat, actual_hr_resolution)
     if len(meshes) != 1 or not meshes[0].vertices.numel() or not meshes[0].faces.numel():
         raise RuntimeError("geometry decoder returned an empty mesh")
     meshes[0].fill_holes()
@@ -348,7 +364,7 @@ def infer_native(pipe, image, camera: dict, receipt: dict, *, seed: int,
                                                     "optimized_mesh_scale": selected,
                                                     "effective_camera_distance": condition["distance"] * selected,
                                                     "objective": "dense_grid_boundary_padding"}}
-    return {"verts": vertices, "faces": faces, "resolution": 1024}, final_camera
+    return {"verts": vertices, "faces": faces, "resolution": actual_hr_resolution}, final_camera
 
 
 def run(package: Path, model_root: Path, input_dir: Path, output_dir: Path, *, seed: int = 42,
