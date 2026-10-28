@@ -29,10 +29,41 @@ def camera_from_intrinsics(intrinsics: np.ndarray, width: int, height: int, *, r
             "moge_resolution_level": int(resolution_level)}
 
 
+def _image_depth(result: dict, width: int, height: int) -> np.ndarray:
+    """Copy MoGe camera-z, rejecting outputs that changed the source pixel grid."""
+    value = result.get("depth")
+    if value is None:
+        raise ValueError("MoGe did not return an image depth map")
+    depth = value.detach().float().cpu().numpy()
+    if depth.shape == (1, height, width):
+        depth = depth[0]
+    if depth.shape != (height, width):
+        raise ValueError("MoGe depth must preserve the input image pixel grid")
+    valid = np.isfinite(depth) & (depth > 0)
+    mask = result.get("mask")
+    if mask is not None:
+        mask = mask.detach().cpu().numpy()
+        if mask.shape == (1, height, width):
+            mask = mask[0]
+        if mask.shape != depth.shape:
+            raise ValueError("MoGe valid mask must match the image depth grid")
+        valid &= np.isfinite(mask) & (mask > 0)
+    return np.where(valid, depth, np.nan).astype(np.float32)
+
+
 def estimate(image: Path, model_path: Path, module_name: str = "moge.model.v2", resolution_level: int = 9,
-             device: str = "cuda") -> dict:
+             device: str = "cuda", *, depth_output: Path | None = None) -> dict:
+    """Estimate the camera and optionally save depth on the unchanged input pixel grid.
+
+    Invalid model pixels become NaN. No crop, resize, or second model call is
+    involved; the texture loader resizes this map with the same image frame.
+    """
     if not 0 <= resolution_level <= 9:
         raise ValueError("resolution_level must be in [0, 9]")
+    if depth_output is not None:
+        depth_output = Path(depth_output)
+        if depth_output.exists():
+            raise FileExistsError(f"image depth output must be new: {depth_output}")
     module = importlib.import_module(module_name)
     model_cls = getattr(module, "MoGeModel", None)
     if model_cls is None:
@@ -49,8 +80,14 @@ def estimate(image: Path, model_path: Path, module_name: str = "moge.model.v2", 
         tensor = torch.from_numpy(np.asarray(rgb, dtype=np.float32) / 255.0).permute(2, 0, 1).to(device)
         with torch.inference_mode():
             result = model.infer(tensor, resolution_level=resolution_level, force_projection=True, apply_mask=True)
-        return camera_from_intrinsics(result["intrinsics"].squeeze().float().cpu().numpy(), width, height,
-                                      resolution_level=resolution_level)
+        camera = camera_from_intrinsics(result["intrinsics"].squeeze().float().cpu().numpy(), width, height,
+                                        resolution_level=resolution_level)
+        if depth_output is not None:
+            depth = _image_depth(result, width, height)
+            depth_output.parent.mkdir(parents=True, exist_ok=True)
+            with depth_output.open("xb") as stream:
+                np.save(stream, depth, allow_pickle=False)
+        return camera
     finally:
         model.cpu()
         del tensor, result, model
@@ -67,9 +104,11 @@ def main() -> None:
                         help="MoGe-2 detail level from 0 (fastest) to 9 (highest).")
     parser.add_argument("--device", default="cuda")
     parser.add_argument("--output", type=Path, required=True)
+    parser.add_argument("--depth-output", type=Path, help="save image-aligned camera-z as .npy; invalid pixels become NaN")
     args = parser.parse_args()
     args.output.parent.mkdir(parents=True, exist_ok=True)
-    args.output.write_text(json.dumps(estimate(args.image, args.model, args.module, args.resolution_level, args.device), indent=2) + "\n")
+    args.output.write_text(json.dumps(estimate(args.image, args.model, args.module, args.resolution_level, args.device,
+                                             depth_output=args.depth_output), indent=2) + "\n")
 
 
 if __name__ == "__main__":

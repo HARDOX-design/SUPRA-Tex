@@ -111,7 +111,7 @@ def run(input_image: Path, output: Path, *, moge_model: str | Path,
         geometry_scale_search: bool = False, geometry_target_padding: int = 3, geometry_max_iterations: int = 2,
         geometry_seed: int = 42, record_material_provenance: bool = False,
         attention: str = "auto", low_vram: bool | None = None,
-        parallel_frontend: bool = False) -> dict[str, str]:
+        parallel_frontend: bool = False, export_image_depth: bool = True) -> dict[str, str]:
     """Build the condition, canonical camera, and material-map handoff in one directory."""
     if record_material_provenance and firered_manifest is not None:
         raise ValueError("material provenance does not support a custom FireRed manifest; "
@@ -168,7 +168,11 @@ def run(input_image: Path, output: Path, *, moge_model: str | Path,
     finally:
         if estimator is not None:
             estimator.close()
-    camera = estimate(rgb, moge_model, moge_module, resolution_level, device)
+    # Depth gating is single-view only; a dual-view front packet must omit it.
+    export_image_depth = export_image_depth and not record_material_provenance
+    depth_path = output / "image_depth.npy"
+    camera = estimate(rgb, moge_model, moge_module, resolution_level, device,
+                      **({"depth_output": depth_path} if export_image_depth else {}))
     camera["foreground_source"] = foreground_source
     camera_path = output / "camera.json"
     camera_path.write_text(json.dumps(camera, indent=2) + "\n", encoding="utf-8")
@@ -222,6 +226,8 @@ def run(input_image: Path, output: Path, *, moge_model: str | Path,
     result = {"condition_rgba": str(rgba), "condition_rgb": str(rgb), "camera": str(camera_path),
               "albedo": str(final_albedo), "mra": str(final_mra), "foreground_source": foreground_source,
               "material_backend": material_backend}
+    if export_image_depth:
+        result["image_depth"] = str(depth_path)
     if geometry_result:
         result.update(geometry=str(geometry_path), geometry_receipt=geometry_result["receipt"])
     return result
@@ -261,6 +267,8 @@ def main() -> None:
     parser.add_argument("--material-checkpoint-manifest", type=Path)
     parser.add_argument("--key", default="input")
     parser.add_argument("--record-material-provenance", action="store_true", help="write material bindings for optional dual-view inference")
+    parser.add_argument("--no-image-depth", action="store_true",
+                        help="omit the optional image_depth.npy filtering input (implied by --record-material-provenance)")
     parser.add_argument("--device", default="cuda")
     parser.add_argument("--attention", choices=("auto", "flash_attn_3", "flash_attn", "sdpa", "xformers"), default="auto")
     parser.add_argument("--low-vram", action=argparse.BooleanOptionalAction, default=None,
@@ -284,6 +292,7 @@ def main() -> None:
                          rmbg_model=args.rmbg_model, use_input_alpha=args.use_input_alpha, device=args.device,
                          moge_module=args.moge_module, resolution_level=args.resolution_level, key=args.key,
                          record_material_provenance=args.record_material_provenance,
+                         export_image_depth=not args.no_image_depth,
                          attention=args.attention, low_vram=args.low_vram), indent=2))
 
 

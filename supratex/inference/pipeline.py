@@ -196,6 +196,17 @@ def _load_case(input_dir: str | Path, torch: Any, image: Any, remove_floaters: b
         raise ValueError("camera.json must be valid JSON") from error
     if "camera_angle_x" not in camera or "distance" not in camera:
         raise ValueError("camera.json must provide canonical camera_angle_x and distance")
+    image_depth = None
+    if (root / "image_depth.npy").is_file():
+        import numpy as np
+        raw = np.load(root / "image_depth.npy", allow_pickle=False)
+        if raw.shape != rgba.size[::-1]:
+            raise ValueError("image_depth.npy must match the condition_rgba.png pixel grid")
+        if raw.dtype.kind not in "fiu":
+            raise ValueError("image_depth.npy must contain numeric camera-z depths")
+        raw = raw.astype(np.float32)
+        raw[~np.isfinite(raw) | (raw <= 0)] = np.nan
+        image_depth = np.asarray(image.fromarray(raw).resize((RESOLUTION, RESOLUTION), image.Resampling.NEAREST), dtype=np.float32)
     if remove_floaters:
         import numpy as np
         from .geometry_cleanup import remove_floaters as clean
@@ -203,7 +214,8 @@ def _load_case(input_dir: str | Path, torch: Any, image: Any, remove_floaters: b
         vertices, faces = vertices.contiguous(), faces.contiguous()
         print(f"Floaters: removed {report['removed_components']} of {report['components']} components "
               f"({report['removed_faces']} of {report['faces']} faces)", flush=True)
-    return {"vertices": vertices, "faces": faces, "rgba": rgba, "albedo": albedo, "mra": mra, "camera": camera}
+    return {"vertices": vertices, "faces": faces, "rgba": rgba, "albedo": albedo, "mra": mra, "camera": camera,
+            "image_depth": image_depth}
 
 
 def _runtime() -> dict[str, Any]:
@@ -266,7 +278,8 @@ def _alignment_report(uv: Any, alpha: Any, admission: Mapping[str, int], np: Any
     rejected = [f"missed geometry {admission['trusted_rays'] - admission['first_hits']}",
                 f"depth edge {admission['rejected_depth_edge']}"]
     rejected += [f"{label} {admission[key]}" for key, label in (("rejected_silhouette", "silhouette margin"),
-                                                                ("rejected_grazing", "grazing")) if admission[key]]
+                                                                ("rejected_grazing", "grazing"),
+                                                                ("rejected_image_depth", "image-depth mismatch")) if admission.get(key)]
     print(f"Observation: silhouette IoU {report['silhouette_iou']:.3f} "
           f"(geometry inside image {report['geometry_inside_image']:.3f}, image covered {report['image_covered_by_geometry']:.3f}); "
           f"admitted {admission['admitted']} of {admission['trusted_rays']} trusted pixels ({', '.join(rejected)})", flush=True)
@@ -276,7 +289,20 @@ def _alignment_report(uv: Any, alpha: Any, admission: Mapping[str, int], np: Any
     return report
 
 
-def _partial(surface: Any, shape: Any, case: Mapping[str, Any], external: Any, projection: Any, encoder: Any, normalization: Mapping[str, Any], runtime: Mapping[str, Any], device: str) -> Any:
+def _source_footprint_safe(keep: Any, grid: Any, runtime: Mapping[str, Any], device: str) -> Any:
+    """Reject material samples with nonzero weight in a depth-mismatch pixel.
+
+    Use the actual material-sampling grid and interpolation conventions, rather
+    than a separately rounded CPU projection of voxel centres.
+    """
+    torch, F, np = runtime["torch"], runtime["F"], runtime["np"]
+    unsafe = torch.from_numpy(np.asarray(~keep, dtype=np.float32)).to(device)[None, None]
+    contribution = F.grid_sample(unsafe, grid, mode="bilinear", align_corners=False,
+                                 padding_mode="border")[0, 0, 0]
+    return contribution <= 1e-6
+
+
+def _partial(surface: Any, shape: Any, case: dict[str, Any], external: Any, projection: Any, encoder: Any, normalization: Mapping[str, Any], runtime: Mapping[str, Any], device: str) -> Any:
     torch, F, np, image, image_filter, sparse = runtime["torch"], runtime["F"], runtime["np"], runtime["Image"], runtime["ImageFilter"], runtime["sparse"]
     coords = surface.coords[:, 1:].long(); points = (coords.float() + .5) / RESOLUTION - .5
     camera = (torch.cat((points, torch.ones_like(points[:, :1])), dim=1) @ external.T)[:, :3]
@@ -289,10 +315,31 @@ def _partial(surface: Any, shape: Any, case: Mapping[str, Any], external: Any, p
     mask = image.fromarray(np.where(alpha >= 254, 255, 0).astype(np.uint8)).resize((RESOLUTION, RESOLUTION), image.Resampling.NEAREST).filter(image_filter.MinFilter(5))
     trusted = torch.from_numpy(np.asarray(mask, dtype=np.uint8).copy() == 255)
     bits, ordered, order = native_observation.build_occupancy_index(coords)
-    admission: dict[str, int] = {}
-    owners = native_observation.pixel_first_occupied(dict(case["camera"]), bits, trusted, stats=admission)
+    admission: dict[str, Any] = {}
+    admitted: dict[str, Any] = {}
+    if case.get("image_depth") is None:
+        owners = native_observation.pixel_first_occupied(dict(case["camera"]), bits, trusted, stats=admission)
+    else:
+        owners = native_observation.pixel_first_occupied(dict(case["camera"]), bits, trusted, stats=admission,
+                                                         image_depth=case["image_depth"], admitted_out=admitted)
     _alignment_report(uv, alpha, admission, np, image, image_filter)
+    if admission.get("image_depth"):
+        diagnostic = admission["image_depth"]
+        detail = f" ({diagnostic['reason']})" if diagnostic.get("reason") else ""
+        print(f"Image depth gate: {diagnostic['status']}{detail}; "
+              f"{diagnostic['valid_pixels']} paired depth pixels, "
+              f"{diagnostic['rejected_pixels']} mismatch pixels", flush=True)
     visible = native_observation.owner_rows(coords, owners, ordered, order)
+    if "pixels" in admitted:
+        keep = np.asarray(admitted["pixels"], dtype=bool)
+        case["observation_keep"] = keep
+        safe = _source_footprint_safe(keep, grid, runtime, device)
+        admission["rejected_image_depth_footprint_owners"] = int((visible & ~safe).sum())
+        visible &= safe
+        admission["observed_voxels"] = int(visible.sum())
+        case["observation_admission"] = admission
+        print(f"Observation image depth: excluded {admission['rejected_image_depth_footprint_owners']} "
+              f"additional voxel samples crossing the mismatch mask; {admission['observed_voxels']} observed voxels", flush=True)
     if not bool(visible.any()): raise RuntimeError("the trusted alpha gate leaves no observed material surface")
     with torch.no_grad():
         return native_observation.encode_partial(encoder, coords, visible, sampled(case["albedo"]), sampled(case["mra"]), shape.coords[:, 1:], dict(normalization), sparse, device)
@@ -441,6 +488,8 @@ def _run_completion_low_vram(*, case: Mapping[str, Any], back_case: Mapping[str,
     representation = runtime["MeshWithVoxel"](case["vertices"], case["faces"], [-.5, -.5, -.5], 1. / RESOLUTION, decoded_cpu.coords[:, 1:].int(), decoded_cpu.feats.float().clamp(0, 1), torch.Size([1, 6, RESOLUTION, RESOLUTION, RESOLUTION]), layout=LAYOUT)
     del decoded_cpu
     _export(Path(output), representation, texture_size, decimation_target, texture_format, runtime, gutter=gutter, low_vram=True)
+    if back_case is None and case.get("observation_keep") is not None:
+        return {"observation_keep": case["observation_keep"], "observation_admission": case.get("observation_admission", {})}
     return dual_stats
 
 
@@ -456,6 +505,9 @@ def _run_completion(*, input_dir: str | Path, output: str | Path, model_config: 
     runtime = _runtime(); torch, models = runtime["torch"], runtime["models"]
     if not torch.cuda.is_available(): raise RuntimeError("CUDA is unavailable")
     case = _load_case(input_dir, torch, runtime["Image"], remove_floaters); ckpts = _completion_vae_root(trellis_root)
+    if back_case is not None and (case.get("image_depth") is not None or back_case.get("image_depth") is not None):
+        raise ValueError("image_depth.npy consistency gating currently supports single-view completion only; "
+                         "remove it or prepare the front view with --no-image-depth")
     if os.environ.get("SUPRATEX_LOW_VRAM", "0") == "1":
         return _run_completion_low_vram(case=case, back_case=back_case, ckpts=ckpts, config=config,
                                         dataset=dataset, checkpoint_path=checkpoint_path, partial_stats=partial_stats,
@@ -499,6 +551,8 @@ def _run_completion(*, input_dir: str | Path, output: str | Path, model_config: 
     if decoded.feats.shape[1] != 6: raise RuntimeError("material decoder must emit six PBR channels")
     representation = runtime["MeshWithVoxel"](case["vertices"].to(device), case["faces"].to(device), [-.5, -.5, -.5], 1. / RESOLUTION, decoded.coords[:, 1:].int(), decoded.feats.float().clamp(0, 1), torch.Size([1, 6, RESOLUTION, RESOLUTION, RESOLUTION]), layout=LAYOUT)
     _export(Path(output), representation, texture_size, decimation_target, texture_format, runtime, gutter=gutter)
+    if back_case is None and case.get("observation_keep") is not None:
+        return {"observation_keep": case["observation_keep"], "observation_admission": case.get("observation_admission", {})}
     return dual_stats
 
 
@@ -566,7 +620,7 @@ def _run_front_reprojection(arguments: dict[str, Any], work_dir: str | Path | No
     write_json(work / "receipt.json", receipt)
     try:
         native = work / "preds/mesh.glb"
-        _run_completion(**{**arguments, "input_dir": source, "output": native, "gutter": False})
+        completion = _run_completion(**{**arguments, "input_dir": source, "output": native, "gutter": False})
         # Reprojection runs in separate CUDA workers; release cached blocks first.
         import gc
         import torch
@@ -576,7 +630,13 @@ def _run_front_reprojection(arguments: dict[str, Any], work_dir: str | Path | No
         write_json(work / "receipt.json", receipt)
         from .reprojection import run_front_view
         try:
-            final = run_front_view(native, source, work / "reproject")
+            keep = (completion or {}).get("observation_keep")
+            if keep is None:
+                final = run_front_view(native, source, work / "reproject")
+            else:
+                receipt["image_depth_admission"] = completion.get("observation_admission", {})
+                receipt["reprojection_excluded_source_pixels"] = int((~keep).sum())
+                final = run_front_view(native, source, work / "reproject", keep=keep)
         except Exception as error:
             _publish_unrefined(native, output, arguments["gutter"], error)
             receipt.update(status="valid", stage="complete", refine="skipped",
@@ -606,6 +666,10 @@ def run_completion(*, input_dir: str | Path, output: str | Path, model_config: s
                      checkpoint=checkpoint, trellis_root=trellis_root, seed=seed, device=device,
                      texture_size=texture_size, decimation_target=decimation_target,
                      texture_format=texture_format, gutter=gutter, remove_floaters=remove_floaters)
+    if back_view_dir is not None and any((Path(root) / "image_depth.npy").is_file()
+                                         for root in (input_dir, back_view_dir)):
+        raise ValueError("image_depth.npy consistency gating currently supports single-view completion only; "
+                         "remove it or prepare the front view with --no-image-depth")
     # Dual-view refines both views itself, so --refine needs no separate pass there.
     if refine and back_view_dir is None:
         _run_front_reprojection(arguments, work_dir)

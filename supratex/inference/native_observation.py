@@ -11,6 +11,8 @@ from typing import Any
 import numpy as np
 import torch
 
+from .image_depth import image_depth_disagreement
+
 RESOLUTION = 1024
 LATENT_RESOLUTION = 64
 
@@ -233,10 +235,16 @@ def _admitted_pixels(depth: np.ndarray, missed: np.ndarray, focal: tuple[float, 
 
 
 def pixel_first_occupied(camera: dict[str, Any], occupancy: np.ndarray, trusted: torch.Tensor, depth_edge_rtol: float = 0.04,
-                         stats: dict | None = None) -> torch.Tensor:
-    """Map trusted camera pixels to their first occupied volume cell."""
+                         stats: dict | None = None, image_depth: np.ndarray | None = None,
+                         admitted_out: dict | None = None) -> torch.Tensor:
+    """Map trusted pixels to first occupied cells, optionally excluding depth conflicts.
+
+    ``admitted_out['pixels']`` is the complementary image-depth-conflict mask
+    for reprojection, not the union of all observation admission rules.
+    """
     if "extrinsic" in camera:
-        return pixel_first_occupied_cv(camera, occupancy, trusted, depth_edge_rtol, stats=stats)
+        return pixel_first_occupied_cv(camera, occupancy, trusted, depth_edge_rtol, stats=stats,
+                                       image_depth=image_depth, admitted_out=admitted_out)
     if trusted.shape != (RESOLUTION, RESOLUTION):
         raise ValueError("trusted alpha mask must be 1024 by 1024")
     if "camera_angle_x" not in camera or "distance" not in camera:
@@ -261,6 +269,12 @@ def pixel_first_occupied(camera: dict[str, Any], occupancy: np.ndarray, trusted:
     admitted = _admitted_pixels(depth, missed, (focal, focal), depth_edge_rtol, stats=stats)
     retained = hit_mask.copy()
     retained[hit_mask] &= admitted[y[hit_mask], x[hit_mask]]
+    if image_depth is not None:
+        mismatch = _image_depth_mask(camera, occupancy, image_depth, stats, admitted_out)
+        rejected = retained & mismatch[y, x]
+        retained &= ~mismatch[y, x]
+        if stats is not None:
+            stats.update(rejected_image_depth=int(rejected.sum()), admitted=int(retained.sum()))
     hit = owners[retained]
     if not hit.size:
         raise RuntimeError("observation admission removed every first-hit observation")
@@ -292,6 +306,54 @@ def camera_rays(camera: dict[str, Any], ys: np.ndarray, xs: np.ndarray) -> tuple
     return eye, directions, rotation
 
 
+def first_hit_depth(camera: dict[str, Any], occupancy: np.ndarray) -> np.ndarray:
+    """Return full-grid first-hit camera-z for canonical and complete CV cameras.
+
+    The canonical camera looks down world -z; its positive view depth is
+    ``eye_z - world_z``. CV cameras instead use the z component after their
+    world-to-camera rotation. Neither convention uses Euclidean ray length.
+    """
+    ys, xs = np.mgrid[0:RESOLUTION, 0:RESOLUTION]
+    ys, xs = ys.ravel(), xs.ravel()
+    if "extrinsic" in camera:
+        eye, directions, rotation = camera_rays(camera, ys, xs)
+    else:
+        angle = float(camera["camera_angle_x"])
+        distance = float(camera["distance"]) * float(camera.get("mesh_scale", 1.0))
+        if not math.isfinite(angle) or not 0 < angle < math.pi or not math.isfinite(distance) or distance <= 0:
+            raise ValueError("canonical camera requires a finite FOV in (0, pi) and positive effective distance")
+        # Keep the arithmetic order of the canonical admission ray builder.
+        focal = 16.0 / math.tan(angle / 2.0) * RESOLUTION / 32.0
+        eye = np.array([0., 0., distance], dtype=np.float64)
+        directions = np.column_stack(((xs + .5 - RESOLUTION / 2) / focal,
+                                      -(ys + .5 - RESOLUTION / 2) / focal,
+                                      -np.ones(xs.size))).astype(np.float64)
+        rotation = np.diag([1., -1., -1.])
+    owners, reasons, _ = _dda_batch_kernel()(eye, directions, occupancy, -.5, .5, RESOLUTION)
+    hits = reasons == 0
+    centers = (owners[hits].astype(np.float64) + .5) / RESOLUTION - .5
+    values = ((centers - eye) @ rotation.T)[:, 2]
+    if not np.isfinite(values).all() or not (values > 0).all():
+        raise RuntimeError("first-hit owners must lie in front of the camera")
+    result = np.full((RESOLUTION, RESOLUTION), np.nan, dtype=np.float32)
+    result[ys[hits], xs[hits]] = values.astype(np.float32)
+    return result
+
+
+def _image_depth_mask(camera: dict[str, Any], occupancy: np.ndarray, image_depth: np.ndarray,
+                      stats: dict | None, admitted_out: dict | None) -> np.ndarray:
+    if np.asarray(image_depth).shape != (RESOLUTION, RESOLUTION):
+        raise ValueError("image depth must be an observation-resolution map")
+    diagnostic: dict[str, Any] = {}
+    mismatch = image_depth_disagreement(first_hit_depth(camera, occupancy), image_depth, stats=diagnostic)
+    if stats is not None:
+        stats["image_depth"] = diagnostic
+    if admitted_out is not None:
+        admitted_out["pixels"] = ~mismatch
+        admitted_out["image_depth"] = diagnostic
+    return mismatch
+
+
 def pixel_hits_cv(camera: dict[str, Any], occupancy: np.ndarray, mask: np.ndarray) -> np.ndarray:
     """Return the raw first-hit silhouette, without trusted-mask depth filtering."""
     if mask.shape != (RESOLUTION, RESOLUTION) or mask.dtype != np.bool_:
@@ -305,7 +367,8 @@ def pixel_hits_cv(camera: dict[str, Any], occupancy: np.ndarray, mask: np.ndarra
 
 
 def pixel_first_occupied_cv(camera: dict[str, Any], occupancy: np.ndarray, trusted: torch.Tensor,
-                            depth_edge_rtol: float = .04, stats: dict | None = None) -> torch.Tensor:
+                            depth_edge_rtol: float = .04, stats: dict | None = None,
+                            image_depth: np.ndarray | None = None, admitted_out: dict | None = None) -> torch.Tensor:
     """Apply the production first-hit admission rules to a full CV camera."""
     if trusted.shape != (RESOLUTION, RESOLUTION) or trusted.dtype != torch.bool:
         raise ValueError("trusted alpha must be a boolean observation-resolution image")
@@ -330,6 +393,12 @@ def pixel_first_occupied_cv(camera: dict[str, Any], occupancy: np.ndarray, trust
     intrinsic = np.asarray(camera.get("projection_intrinsic", camera.get("intrinsic")), dtype=np.float64)
     focal = (float(intrinsic[0, 0]) * RESOLUTION, float(intrinsic[1, 1]) * RESOLUTION)
     retained = hits & _admitted_pixels(depth, missed, focal, depth_edge_rtol, stats=stats)[ys, xs]
+    if image_depth is not None:
+        mismatch = _image_depth_mask(camera, occupancy, image_depth, stats, admitted_out)
+        rejected = retained & mismatch[ys, xs]
+        retained &= ~mismatch[ys, xs]
+        if stats is not None:
+            stats.update(rejected_image_depth=int(rejected.sum()), admitted=int(retained.sum()))
     kept = owners[retained].astype(np.int64, copy=False)
     if not kept.size:
         raise RuntimeError("observation admission removed every first-hit observation")

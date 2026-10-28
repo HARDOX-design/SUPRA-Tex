@@ -30,7 +30,7 @@ __all__ = ["run_dual_view", "run_front_view", "validate_dual_view"]
 PROFILE = "supratex.dual_view.reproject_continuous"
 
 
-def _prepare_inputs(source: Path, destination: Path, camera: dict[str, Any]) -> dict[str, Any]:
+def _prepare_inputs(source: Path, destination: Path, camera: dict[str, Any], keep: Any = None) -> dict[str, Any]:
     """Align observation alpha and RGB once, preserving native albedo/MRA maps."""
     from PIL import Image
 
@@ -45,6 +45,11 @@ def _prepare_inputs(source: Path, destination: Path, camera: dict[str, Any]) -> 
         resized = rgb.convert("RGB").resize((1024, 1024), Image.Resampling.LANCZOS)
         alpha = rgba.convert("RGBA").getchannel("A").point(lambda value: 255 if value >= 254 else 0)
         alpha = alpha.resize((1024, 1024), Image.Resampling.NEAREST)
+        if keep is not None:
+            import numpy as np
+            # Apply at the actual projection grid. A 1024 -> small source ->
+            # 1024 round trip could otherwise resurrect thin rejected strips.
+            alpha = Image.fromarray(np.where(keep, np.asarray(alpha), 0).astype(np.uint8))
         resized.save(destination / "condition_rgb.png")
         aligned = resized.copy()
         aligned.putalpha(alpha)
@@ -75,13 +80,14 @@ def _command(module: str, arguments: list[str], log: Path) -> None:
         raise RuntimeError(f"reprojection worker failed with exit code {result}; see {log}")
 
 
-def _run_side(baseline: Path, source: Path, output: Path, camera: dict[str, Any]) -> Path:
+def _run_side(baseline: Path, source: Path, output: Path, camera: dict[str, Any], keep: Any = None) -> Path:
     """Publish one view only after the projection and continuous candidates pass."""
     output.mkdir(parents=True)
     baseline_binding = bind_file(baseline)
     code = {path.name: bind_file(path) for path in Path(__file__).parent.glob("*.py")}
     inputs = output / "inputs_1024"
-    source_bindings = _prepare_inputs(source, inputs, camera)
+    source_bindings = (_prepare_inputs(source, inputs, camera) if keep is None else
+                       _prepare_inputs(source, inputs, camera, keep=keep))
     input_bindings = {path.name: bind_file(path) for path in inputs.iterdir() if path.is_file()}
     renderer = Path(__file__).with_name("_renderer.py").resolve()
     project, continuous = output / "project", output / "continuous"
@@ -185,13 +191,17 @@ def _validate_side(output: Path) -> dict[str, Any]:
     return receipt
 
 
-def run_front_view(native_glb: Path, input_dir: Path, output_dir: Path) -> Path:
+def run_front_view(native_glb: Path, input_dir: Path, output_dir: Path, keep: Any = None) -> Path:
     """Reproject the single reference view onto a single-view result.
 
     This is the front half of dual-view texturing with the canonical reference
     camera from ``camera.json``. Inputs are staged under ``output_dir`` so their
     bindings stay valid; a missing ``condition_rgb.png`` is derived from the
     RGBA observation with black premultiplication, as the frontend writes it.
+    Optional ``keep`` excludes source pixels identified as image/geometry depth
+    mismatches. It changes only staged projection trust, not source RGB, source
+    files, or the final mesh's opacity. Other observation-admission filters are
+    not passed through this mask.
     """
     import numpy as np
     from PIL import Image
@@ -201,6 +211,10 @@ def run_front_view(native_glb: Path, input_dir: Path, output_dir: Path) -> Path:
     if output.exists():
         raise FileExistsError(f"front reprojection requires a new destination: {output}")
     camera = read_json(source / "camera.json")
+    if keep is not None:
+        keep = np.asarray(keep)
+        if keep.shape != (1024, 1024) or keep.dtype != np.bool_:
+            raise ValueError("reprojection keep must be a boolean 1024 by 1024 source-image mask")
     try:
         camera = {"camera_angle_x": float(camera["camera_angle_x"]), "distance": float(camera["distance"]),
                   "mesh_scale": float(camera.get("mesh_scale", 1.0))}
@@ -216,6 +230,8 @@ def run_front_view(native_glb: Path, input_dir: Path, output_dir: Path) -> Path:
         with Image.open(source / "condition_rgba.png") as image:
             rgba = np.asarray(image.convert("RGBA"), dtype=np.float32) / 255.
         Image.fromarray((np.clip(rgba[..., :3] * rgba[..., 3:4], 0, 1) * 255).astype(np.uint8)).save(staged / "condition_rgb.png")
+    if keep is not None:
+        return _run_side(native, staged, output / "front", camera, keep=keep)
     return _run_side(native, staged, output / "front", camera)
 
 

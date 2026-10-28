@@ -43,7 +43,13 @@ checkpoint revision. Runtime and dependency paths must be local directories.
 For the same options on `infer.py`, use `--material-revision` instead of
 `--revision` (which selects the completion model there).
 Use a fresh output directory. The handoff contains `condition_rgba.png`,
-`condition_rgb.png`, `camera.json`, `albedo.png`, and `mra.png`.
+`condition_rgb.png`, `camera.json`, `image_depth.npy`, `albedo.png`, and `mra.png`.
+`image_depth.npy` is the MoGe-2 camera-z depth on the condition pixel grid
+(NaN where invalid). Single-view completion uses it to exclude source pixels
+whose depth disagrees with the generated geometry near depth edges, and it skips
+this gate when the depth is missing or degenerate. Pass `--no-image-depth` to
+omit it; `--record-material-provenance` omits it because dual-view completion
+does not support the gate.
 
 For an existing non-opaque foreground RGBA, omit `--with-rmbg` during preparation
 and replace `--rmbg-model` with `--use-input-alpha` in the frontend command.
@@ -127,7 +133,7 @@ Individual foreground, camera, and FireRed stages remain available:
 python -m supratex.frontend.preprocess --input input.png --rmbg-model /models/rmbg2 \
   --output-dir work
 python -m supratex.frontend.camera --image work/condition_rgb.png --model /models/moge2 \
-  --output work/camera.json
+  --output work/camera.json --depth-output work/image_depth.npy
 python -m supratex.frontend.firered --base-model /models/firered-base \
   --condition work/condition_rgb.png --weights full_transformer.safetensors \
   --spec joint_contract.json --checkpoint-manifest checkpoint_complete.json --output work/material
