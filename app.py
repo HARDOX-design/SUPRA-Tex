@@ -19,6 +19,82 @@ from types import SimpleNamespace
 from scripts.run_example import ROOT, build_command, read_config
 
 
+UI_CSS = """
+.gradio-container {
+    width: 100% !important; max-width: 1320px !important;
+    margin: 0 auto !important; padding: 24px 28px 32px !important;
+}
+.gradio-container .app {padding: 0 !important;}
+#app-header {margin-bottom: 12px;}
+#app-header .html-container {padding: 0;}
+.app-brand {display: flex; align-items: center; gap: 14px; padding-bottom: 22px; border-bottom: 1px solid #e5e8ed;}
+.brand-icon {display: grid; place-items: center; width: 42px; height: 42px; border: 1px solid #dce2e9; border-radius: 12px; color: #34465c;}
+.app-brand h1 {margin: 0; font-size: 25px; line-height: 1.2; font-weight: 700; letter-spacing: -.7px; color: #172536;}
+.app-brand p {margin: 5px 0 0; font-size: 13px; color: #6b7786;}
+.local-label {margin-left: auto; font-size: 12px; color: #6b7786;}
+#workspace {gap: 28px !important; align-items: flex-start;}
+#reference-panel {flex: 0 0 320px !important; min-width: 280px !important; gap: 16px;}
+#preview-panel {flex: 1 1 0 !important; min-width: 0 !important; gap: 14px;}
+.section-heading h3 {margin: 0 !important; font-size: 16px !important; font-weight: 600; color: #253449;}
+#reference-heading {min-height: 34px; display: flex; align-items: center;}
+#reference-image {border: 1px dashed #c6cfd9 !important; border-radius: 12px; background: #fafbfc; overflow: hidden;}
+#examples {padding: 0; border: 0; background: transparent;}
+#examples .gallery {gap: 8px;}
+#examples button {border-radius: 8px;}
+#examples .gallery-item .container {width: 64px; max-width: 64px; height: 64px;}
+#generate-actions {gap: 8px;}
+#generate-button {min-height: 44px; font-weight: 600;}
+#stop-button {min-height: 44px;}
+#generation-options {border-radius: 10px;}
+#preview-toolbar {align-items: center; min-height: 34px; gap: 12px;}
+#preview-toolbar .section-heading {flex: 1;}
+#download-button {min-height: 34px;}
+#model-preview {border: 1px solid #e2e7ed !important; border-radius: 12px; overflow: hidden; background: #f4f6f8;}
+#model-preview .empty {display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 20px; background: #f4f6f8;}
+#model-preview .empty svg {width: 42px; height: 42px; color: #a0adbb;}
+#model-preview .empty::after {content: "Your 3D preview\\aGenerate a model to rotate and explore it"; white-space: pre-line; text-align: center; font-size: 14px; line-height: 1.9; color: #738295;}
+#generation-status {padding: 11px 14px; border: 1px solid #e5e9ef; border-radius: 8px; background: #fafbfc; color: #536276; min-height: 43px;}
+#generation-status p {margin: 0; font-size: 13px;}
+#reference-details {border-radius: 10px;}
+@media (max-width: 860px) {
+    .gradio-container {padding: 18px 18px 28px !important;}
+    #workspace {flex-direction: column; gap: 24px !important;}
+    #reference-panel, #preview-panel {flex: 1 1 auto !important; width: 100% !important; min-width: 0 !important;}
+    #model-preview {height: 420px !important;}
+}
+@media (max-width: 480px) {
+    .local-label {display: none;}
+    .app-brand h1 {font-size: 23px;}
+    .app-brand p {font-size: 12px;}
+}
+"""
+
+
+def ui_theme():
+    import gradio as gr
+
+    theme = gr.themes.Base(primary_hue="slate", secondary_hue="slate", neutral_hue="slate",
+                           font=["Arial", "sans-serif"], radius_size="lg").set(
+        body_background_fill="#ffffff", body_text_color="#253449",
+        body_text_color_subdued="#6b7786", background_fill_primary="#ffffff",
+        background_fill_secondary="#f4f6f8", block_background_fill="#ffffff",
+        block_border_color="#e2e7ed", block_label_background_fill="#ffffff",
+        block_label_text_color="#536276", block_title_text_color="#253449",
+        block_info_text_color="#738295", input_background_fill="#f8fafc",
+        input_border_color="#dce2e9", input_border_color_focus="#71849b",
+        input_placeholder_color="#8793a1", button_primary_background_fill="#263b52",
+        button_primary_background_fill_hover="#1c2f43", button_primary_border_color="#263b52",
+        button_primary_text_color="#ffffff", button_secondary_background_fill="#ffffff",
+        button_secondary_background_fill_hover="#f1f4f8", button_secondary_border_color="#dce2e9",
+        button_secondary_text_color="#536276", checkbox_background_color_selected="#263b52",
+        checkbox_border_color_selected="#263b52", block_shadow="none",
+        input_shadow="none", button_primary_shadow="none", button_secondary_shadow="none")
+    # Keep this light workspace consistent when the browser prefers dark mode.
+    styles = theme.to_dict()["theme"]
+    return theme.set(**{name: styles[name[:-5]] for name in styles
+                        if name.endswith("_dark") and name[:-5] in styles})
+
+
 class LocalRunner:
     """One GPU job at a time, with a fresh subprocess and directory per request."""
 
@@ -124,35 +200,47 @@ class LocalRunner:
 def build_ui(runner: LocalRunner, *, use_filter: bool = True):
     import gradio as gr
 
-    with gr.Blocks(title="SUPRA-Tex · Local", analytics_enabled=False) as demo:
-        gr.Markdown("# SUPRA-Tex\n3D Generation with Super-Aligned Texture")
-        with gr.Row(equal_height=False):
-            with gr.Column(scale=1, min_width=300):
-                image = gr.Image(label="Reference image", type="filepath", image_mode="RGBA", format="png", height=400)
-                with gr.Accordion("Generation settings", open=True):
+    with gr.Blocks(title="SUPRA-Tex · Local", analytics_enabled=False, fill_width=True) as demo:
+        gr.HTML('''<header class="app-brand">
+            <span class="brand-icon" aria-hidden="true"><svg width="25" height="25" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linejoin="round"><path d="M12 2 21 7v10l-9 5-9-5V7Z M3 7l9 5 9-5 M12 12v10 M7.5 4.5l9 5"/></svg></span>
+            <div><h1>SUPRA-Tex</h1><p>3D Generation with Super-Aligned Texture</p></div>
+            <span class="local-label">Local workspace</span>
+        </header>''', elem_id="app-header")
+        with gr.Row(equal_height=False, elem_id="workspace"):
+            with gr.Column(scale=1, min_width=280, elem_id="reference-panel"):
+                gr.Markdown("### Reference image", elem_id="reference-heading", elem_classes="section-heading")
+                image = gr.Image(label="Reference image", show_label=False, type="filepath", image_mode="RGBA",
+                                 format="png", sources=["upload", "clipboard"], height=280, elem_id="reference-image")
+                examples = [str(ROOT / "assets" / name) for name in
+                            ("pumpkin_wizard.png", "mechanical_beetle.png", "sourdough_bread.png",
+                             "rocket_backpack.png", "peony_teapot.png", "oolong_tea_jar.png",
+                             "spiny_whelk_shell.png", "metalwork_candle_jar.png")
+                            if (ROOT / "assets" / name).is_file()]
+                if examples:
+                    gr.Examples(examples=examples, inputs=image, label="Try an example",
+                                examples_per_page=8, elem_id="examples")
+                with gr.Row(elem_id="generate-actions"):
+                    generate = gr.Button("Generate 3D", variant="primary", scale=4, min_width=180, elem_id="generate-button")
+                    stop = gr.Button("Stop", scale=1, min_width=64, elem_id="stop-button")
+                with gr.Accordion("Generation options", open=False, elem_id="generation-options"):
                     seed = gr.Number(value=42, label="Seed", precision=0, minimum=0, maximum=2**32 - 1)
                     depth_filter = gr.Checkbox(value=use_filter, label="Depth pre-filter",
                                                info="Reduce texture bleed near depth boundaries.")
                     refine = gr.Checkbox(value=False, label="Refine visible textures",
                                          info="Sharpen reference-view details after generation; takes extra time.")
-                with gr.Row():
-                    generate = gr.Button("Generate 3D", variant="primary")
-                    stop = gr.Button("Stop")
-                examples = [str(ROOT / "assets" / name) for name in
-                            ("spiny_whelk_shell.png", "metalwork_candle_jar.png", "cinema_signage.png")
-                            if (ROOT / "assets" / name).is_file()]
-                if examples:
-                    gr.Examples(examples=examples, inputs=image, label="Examples")
-            with gr.Column(scale=2, min_width=400):
-                model = gr.Model3D(label="PBR model", interactive=False, height=540,
-                                   clear_color=(.08, .08, .08, 1))
-                download = gr.DownloadButton("Download GLB", value=None, interactive=False)
-                status = gr.Markdown("Upload an image to begin. Jobs run one at a time.")
-        with gr.Accordion("Reference materials and run log", open=False):
-            with gr.Row():
-                foreground = gr.Image(label="Foreground", interactive=False)
-                albedo = gr.Image(label="Albedo", interactive=False)
-            log = gr.File(label="Run log", interactive=False)
+            with gr.Column(scale=2, min_width=360, elem_id="preview-panel"):
+                with gr.Row(elem_id="preview-toolbar"):
+                    gr.Markdown("### 3D preview", elem_classes="section-heading")
+                    download = gr.DownloadButton("Download GLB", value=None, interactive=False,
+                                                 size="sm", scale=0, min_width=132, elem_id="download-button")
+                model = gr.Model3D(label="PBR model", show_label=False, interactive=False, height=460,
+                                   clear_color=(.957, .965, .973, 1), elem_id="model-preview")
+                status = gr.Markdown("Upload an image, then select **Generate 3D**.", elem_id="generation-status")
+                with gr.Accordion("Reference materials and run log", open=False, elem_id="reference-details"):
+                    with gr.Row():
+                        foreground = gr.Image(label="Foreground", interactive=False)
+                        albedo = gr.Image(label="Albedo", interactive=False)
+                    log = gr.File(label="Run log", interactive=False)
 
         def generate_mesh(image_path, seed_value, filter_enabled, refine_enabled):
             try:
@@ -204,16 +292,8 @@ def main() -> None:
         raise SystemExit(128 + signum)
     signal.signal(signal.SIGTERM, shutdown)
     demo = build_ui(runner, use_filter=not args.no_filter)
-    # Keep the Space's dark/gold presentation without its cloud account services.
-    theme = gr.themes.Base(font=["Arial", "sans-serif"]).set(
-        body_background_fill="#101010", body_background_fill_dark="#101010",
-        body_text_color="#f4f0e7", body_text_color_dark="#f4f0e7",
-        block_background_fill="#191919", block_background_fill_dark="#191919",
-        input_background_fill="#121212", input_background_fill_dark="#121212",
-        button_primary_background_fill="#f2cd70", button_primary_background_fill_dark="#f2cd70",
-        button_primary_text_color="#19150e", button_primary_text_color_dark="#19150e")
     demo.launch(server_name=args.host, server_port=args.port, share=False, ssr_mode=False,
-                theme=theme, css=".gradio-container {max-width: 1200px !important; margin: auto;}",
+                theme=ui_theme(), css=UI_CSS, footer_links=["api"],
                 allowed_paths=[str(runner.output_dir), str(ROOT / "assets")])
 
 

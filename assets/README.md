@@ -6,11 +6,17 @@ Use these images with the [image-to-3D example](../README.md#quick-start).
 To select another example, pass `--input assets/<filename>` from the repository root.
 
 RGBA inputs include foreground masks and can use `--use-input-alpha` without RMBG-2.
-For the RGB candle jar and cinema signage, omit `--use-input-alpha` and provide
+For RGB inputs, omit `--use-input-alpha` and provide
 `--rmbg-model /path/to/RMBG-2.0`.
 
 | Example | File | Format |
 | --- | --- | --- |
+| [Pumpkin wizard](pumpkin_wizard.png) | `pumpkin_wizard.png` | RGB |
+| [Mechanical beetle](mechanical_beetle.png) | `mechanical_beetle.png` | RGB |
+| [Sourdough bread](sourdough_bread.png) | `sourdough_bread.png` | RGB |
+| [Rocket backpack](rocket_backpack.png) | `rocket_backpack.png` | RGB |
+| [Peony teapot](peony_teapot.png) | `peony_teapot.png` | RGB |
+| [Oolong tea jar](oolong_tea_jar.png) | `oolong_tea_jar.png` | RGB |
 | [Spiny whelk shell (default)](spiny_whelk_shell.png) | `spiny_whelk_shell.png` | RGBA |
 | [Pitcher plant](pitcher_plant.png) | `pitcher_plant.png` | RGBA |
 | [Banyan bonsai](banyan_bonsai.png) | `banyan_bonsai.png` | RGBA |
