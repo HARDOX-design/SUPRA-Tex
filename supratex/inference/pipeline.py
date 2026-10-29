@@ -302,7 +302,8 @@ def _source_footprint_safe(keep: Any, grid: Any, runtime: Mapping[str, Any], dev
     return contribution <= 1e-6
 
 
-def _partial(surface: Any, shape: Any, case: dict[str, Any], external: Any, projection: Any, encoder: Any, normalization: Mapping[str, Any], runtime: Mapping[str, Any], device: str) -> Any:
+def _partial(surface: Any, shape: Any, case: Mapping[str, Any], external: Any, projection: Any, encoder: Any, normalization: Mapping[str, Any], runtime: Mapping[str, Any], device: str) -> tuple[Any, dict[str, Any]]:
+    """Encode observations and return the depth-gate handoff for front refine."""
     torch, F, np, image, image_filter, sparse = runtime["torch"], runtime["F"], runtime["np"], runtime["Image"], runtime["ImageFilter"], runtime["sparse"]
     coords = surface.coords[:, 1:].long(); points = (coords.float() + .5) / RESOLUTION - .5
     camera = (torch.cat((points, torch.ones_like(points[:, :1])), dim=1) @ external.T)[:, :3]
@@ -316,12 +317,13 @@ def _partial(surface: Any, shape: Any, case: dict[str, Any], external: Any, proj
     trusted = torch.from_numpy(np.asarray(mask, dtype=np.uint8).copy() == 255)
     bits, ordered, order = native_observation.build_occupancy_index(coords)
     admission: dict[str, Any] = {}
-    admitted: dict[str, Any] = {}
+    depth_gate: dict[str, Any] = {}
+    completion_metadata: dict[str, Any] = {}
     if case.get("image_depth") is None:
         owners = native_observation.pixel_first_occupied(dict(case["camera"]), bits, trusted, stats=admission)
     else:
         owners = native_observation.pixel_first_occupied(dict(case["camera"]), bits, trusted, stats=admission,
-                                                         image_depth=case["image_depth"], admitted_out=admitted)
+                                                         image_depth=case["image_depth"], depth_gate_out=depth_gate)
     _alignment_report(uv, alpha, admission, np, image, image_filter)
     if admission.get("image_depth"):
         diagnostic = admission["image_depth"]
@@ -330,19 +332,19 @@ def _partial(surface: Any, shape: Any, case: dict[str, Any], external: Any, proj
               f"{diagnostic['valid_pixels']} paired depth pixels, "
               f"{diagnostic['rejected_pixels']} mismatch pixels", flush=True)
     visible = native_observation.owner_rows(coords, owners, ordered, order)
-    if "pixels" in admitted:
-        keep = np.asarray(admitted["pixels"], dtype=bool)
-        case["observation_keep"] = keep
-        safe = _source_footprint_safe(keep, grid, runtime, device)
+    if "keep_mask" in depth_gate:
+        depth_keep = np.asarray(depth_gate["keep_mask"], dtype=bool)
+        safe = _source_footprint_safe(depth_keep, grid, runtime, device)
         admission["rejected_image_depth_footprint_owners"] = int((visible & ~safe).sum())
         visible &= safe
         admission["observed_voxels"] = int(visible.sum())
-        case["observation_admission"] = admission
+        completion_metadata = {"observation_keep": depth_keep, "observation_admission": admission}
         print(f"Observation image depth: excluded {admission['rejected_image_depth_footprint_owners']} "
               f"additional voxel samples crossing the mismatch mask; {admission['observed_voxels']} observed voxels", flush=True)
     if not bool(visible.any()): raise RuntimeError("the trusted alpha gate leaves no observed material surface")
     with torch.no_grad():
-        return native_observation.encode_partial(encoder, coords, visible, sampled(case["albedo"]), sampled(case["mra"]), shape.coords[:, 1:], dict(normalization), sparse, device)
+        observation = native_observation.encode_partial(encoder, coords, visible, sampled(case["albedo"]), sampled(case["mra"]), shape.coords[:, 1:], dict(normalization), sparse, device)
+    return observation, completion_metadata
 
 
 def _export(output: Path, representation: Any, texture_size: int, decimation_target: int, texture_format: str, runtime: Mapping[str, Any], *, gutter: bool = False, low_vram: bool = False) -> None:
@@ -434,15 +436,14 @@ def _run_completion_low_vram(*, case: Mapping[str, Any], back_case: Mapping[str,
         shape = _stage_sparse(shape, device)
     del shape_encoder
     texture_encoder = _load_vae(models, _stem(ckpts / "tex_enc_next_dc_f16c32_fp16", "material encoder"))
-    dual_stats = {}
     with _completion_stage(texture_encoder, torch, device):
         if back_case is None:
             external, projection = _camera(case["camera"], device, torch, runtime["utils3d"])
-            observation = _partial(surface, shape, case, external, projection, texture_encoder, partial_stats, runtime, device)
+            observation, completion_metadata = _partial(surface, shape, case, external, projection, texture_encoder, partial_stats, runtime, device)
             del external, projection
         else:
             from .dual_view import encode_two_views
-            observation, dual_stats = encode_two_views(surface, shape, case, back_case, texture_encoder,
+            observation, completion_metadata = encode_two_views(surface, shape, case, back_case, texture_encoder,
                                                        partial_stats, runtime, device)
     del texture_encoder, surface
     torch.cuda.empty_cache()
@@ -488,9 +489,7 @@ def _run_completion_low_vram(*, case: Mapping[str, Any], back_case: Mapping[str,
     representation = runtime["MeshWithVoxel"](case["vertices"], case["faces"], [-.5, -.5, -.5], 1. / RESOLUTION, decoded_cpu.coords[:, 1:].int(), decoded_cpu.feats.float().clamp(0, 1), torch.Size([1, 6, RESOLUTION, RESOLUTION, RESOLUTION]), layout=LAYOUT)
     del decoded_cpu
     _export(Path(output), representation, texture_size, decimation_target, texture_format, runtime, gutter=gutter, low_vram=True)
-    if back_case is None and case.get("observation_keep") is not None:
-        return {"observation_keep": case["observation_keep"], "observation_admission": case.get("observation_admission", {})}
-    return dual_stats
+    return completion_metadata
 
 
 def _run_completion(*, input_dir: str | Path, output: str | Path, model_config: str | Path, checkpoint: str | Path, trellis_root: str | Path, seed: int = 42, device: str = "cuda", texture_size: int = 4096, decimation_target: int = 500000, texture_format: str = "png", gutter: bool = False, back_case: Mapping[str, Any] | None = None, remove_floaters: bool = False) -> dict[str, Any]:
@@ -519,12 +518,11 @@ def _run_completion(*, input_dir: str | Path, output: str | Path, model_config: 
     external, projection = _camera(case["camera"], device, torch, runtime["utils3d"])
     shape, surface = _shape(case["vertices"], case["faces"], shape_encoder, runtime, device)
     shape_encoder.to("cpu"); torch.cuda.empty_cache()
-    dual_stats = {}
     if back_case is None:
-        observation = _partial(surface, shape, case, external, projection, texture_encoder, partial_stats, runtime, device)
+        observation, completion_metadata = _partial(surface, shape, case, external, projection, texture_encoder, partial_stats, runtime, device)
     else:
         from .dual_view import encode_two_views
-        observation, dual_stats = encode_two_views(surface, shape, case, back_case, texture_encoder,
+        observation, completion_metadata = encode_two_views(surface, shape, case, back_case, texture_encoder,
                                                    partial_stats, runtime, device)
     texture_encoder.to("cpu"); torch.cuda.empty_cache()
     from supratex.pipelines.observation_guided_completion import build_completion_model, sample_material_latents
@@ -551,9 +549,7 @@ def _run_completion(*, input_dir: str | Path, output: str | Path, model_config: 
     if decoded.feats.shape[1] != 6: raise RuntimeError("material decoder must emit six PBR channels")
     representation = runtime["MeshWithVoxel"](case["vertices"].to(device), case["faces"].to(device), [-.5, -.5, -.5], 1. / RESOLUTION, decoded.coords[:, 1:].int(), decoded.feats.float().clamp(0, 1), torch.Size([1, 6, RESOLUTION, RESOLUTION, RESOLUTION]), layout=LAYOUT)
     _export(Path(output), representation, texture_size, decimation_target, texture_format, runtime, gutter=gutter)
-    if back_case is None and case.get("observation_keep") is not None:
-        return {"observation_keep": case["observation_keep"], "observation_admission": case.get("observation_admission", {})}
-    return dual_stats
+    return completion_metadata
 
 
 def _require_reprojection_atlas(texture_size: int, texture_format: str) -> None:

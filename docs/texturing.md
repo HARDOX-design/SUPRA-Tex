@@ -19,6 +19,10 @@ The input directory must contain:
 - `albedo.png` and `mra.png`: RGB images at 1024 by 1024. MRA stores metallic,
   roughness, and alpha in R, G, and B respectively.
 
+Optionally include `image_depth.npy`, a float32 MoGe-2 camera-z depth map aligned
+with `condition_rgba.png`, to enable the single-view [depth pre-filter](#depth-pre-filter).
+The [material frontend](frontend.md) produces it by default for single-view runs.
+
 ## Run
 
 From the repository root after [installation](quickstart.md):
@@ -101,6 +105,50 @@ and UV layout. Input vertex arrays and UVs are not preserved by this workflow.
 Optional `--gutter` adds one texel of base-color padding outside UV charts.
 It is disabled by default and preserves covered texels, alpha, metallic/roughness,
 geometry, and UVs. See the [image-to-3D guide](end_to_end.md) for export controls.
+
+## Depth pre-filter
+
+Image and generated geometry can disagree at occlusion boundaries. A material
+observation can then land on the wrong surface, carrying a foreground color into
+the completed texture behind it. Before material encoding, the depth pre-filter
+aligns the image depth with the geometry depth and rejects observations where
+they disagree near depth edges. It also checks the bilinear sampling footprint,
+so a retained sample cannot blend in pixels rejected by this depth gate.
+Completion fills the regions left without observations; the filter does not
+remove geometry.
+
+![Filter off and on for the eel machine, with matching close-ups of the motor/base boundary.](../assets/docs/depth_prefilter_eel.png)
+
+In this example, the yellow streak from the motor support onto the dark base
+disappears with the filter, while the brass motor retains its color. Both results
+use the same input geometry, camera, reference materials, and seed 42, and are
+shown **before texture refinement**. The filter removes 10,483 of 355,164 surface
+observations (2.95%). This is a qualitative example of local leakage reduction;
+the independently exported meshes can differ in triangulation and UV layout.
+
+The filter is **on by default** for single-view image-to-3D, including the local
+web app. After [model preparation](quickstart.md#2-prepare-the-models), use:
+
+```bash
+# Default: depth pre-filter enabled.
+python scripts/run_example.py --input path/to/image.png --output outputs/object.glb
+
+# Disable the depth pre-filter explicitly.
+python scripts/run_example.py --input path/to/image.png --output outputs/object_no_filter.glb --no-filter
+```
+
+`infer.py` and the standalone material frontend also accept `--no-filter`
+(`--no-image-depth` is an alias). For `texturing.py`, the filter is applied when
+the input directory contains `image_depth.npy`; omit that optional file to skip
+it. A controlled comparison should reuse the geometry, camera, and reference
+materials rather than regenerate them for each variant. The filter is skipped
+when a valid depth fit cannot be obtained, and is not supported for dual-view
+inputs. See [the frontend guide](frontend.md) for the depth format and run records.
+
+The pre-filter and `--refine` act at different stages: the filter improves the
+observations **before completion**, while refinement restores visible texture
+detail **after export**. They can be used together; refinement is optional and
+remains off by default.
 
 ## Texture refinement
 

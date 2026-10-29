@@ -112,6 +112,8 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--moge-model", help="local MoGe-2 checkpoint/directory or HF repo ID")
     parser.add_argument("--rmbg-model", help="local RMBG-2 directory or HF repo ID; required for RGB input")
     parser.add_argument("--use-input-alpha", action="store_true", help="require and reuse foreground RGBA alpha")
+    parser.add_argument("--no-filter", "--no-image-depth", dest="no_filter", action="store_true",
+                        help="disable the default single-view image/geometry depth pre-filter; dual-view does not use it")
     parser.add_argument("--resolution-level", type=int, default=9, help="MoGe-2 resolution level")
     parser.add_argument("--geometry-package", type=Path, help="native or paper geometry source checkout; see docs/geometry.md")
     parser.add_argument("--geometry-model", help="local geometry weights directory or HF repo ID")
@@ -278,12 +280,18 @@ def run(args: argparse.Namespace) -> Path:
     from supratex.inference import run_completion
     work.mkdir(parents=True, exist_ok=True)
     handoff = work / "input"
+    filter_requested = not getattr(args, "no_filter", False)
+    filter_enabled = filter_requested and not args.dual_view
+    filter_disabled_reason = ("user_disabled" if not filter_requested else
+                              "dual_view_unsupported" if args.dual_view else None)
     receipt = {"status": "running", "stage": "frontend", "input": str(image), "output": str(output),
                "work_dir": str(work), "seed": args.seed, "gutter": args.gutter,
                "material_backend": args.material_backend, "material_seed": 42,
                "runtime": runtime,
                "model_config": str(config), "checkpoint": str(checkpoint), "dual_view": args.dual_view,
-               "refine": args.refine, "remove_floaters": args.remove_floaters}
+               "refine": args.refine, "remove_floaters": args.remove_floaters,
+               "image_depth_filter": {"requested": filter_requested, "enabled": filter_enabled,
+                                      "disabled_reason": filter_disabled_reason}}
     def record() -> None:
         temporary = work / ".run.json.tmp"
         temporary.write_text(json.dumps(receipt, indent=2) + "\n", encoding="utf-8")
@@ -293,6 +301,7 @@ def run(args: argparse.Namespace) -> Path:
         print(f"[1/2] Foreground, MoGe-2, geometry, material maps -> {handoff}", flush=True)
         result = run_frontend(image, handoff, moge_model=args.moge_model, rmbg_model=args.rmbg_model,
                               use_input_alpha=args.use_input_alpha, resolution_level=args.resolution_level,
+                              export_image_depth=filter_enabled,
                               geometry_package=args.geometry_package.expanduser().resolve(), geometry_model=args.geometry_model,
                               geometry_revision=args.geometry_revision, geometry_seed=args.seed,
                               geometry_initial_mesh_scale=args.geometry_initial_mesh_scale,

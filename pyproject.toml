@@ -17,6 +17,7 @@ dependencies = [
 
 [project.optional-dependencies]
 frontend = ["transformers==4.57.3", "diffusers==0.37.1", "accelerate", "requests", "timm"]
+app = ["gradio==6.10.0"]
 
 [tool.setuptools]
 license-files = ["LICENSE", "THIRD_PARTY_NOTICES.md"]

@@ -63,6 +63,10 @@ overridden through this launcher. Use `infer.py` directly for those changes.
 - `--gutter` adds one texel of base-color padding outside UV charts. It is
   disabled by default and preserves covered texels, alpha, metallic/roughness,
   geometry, and UVs.
+- The depth pre-filter is on by default for single-view runs. It rejects
+  unreliable observations near depth edges before completion to reduce texture
+  leakage. `--no-filter` (alias `--no-image-depth`) disables it. Dual-view runs
+  omit it automatically. See the [comparison and usage](texturing.md#depth-pre-filter).
 - Floater removal is on by default: before completion, disconnected geometry
   pieces that project mostly outside the image foreground are dropped, and a
   `Floaters:` line reports the count. `--no-remove-floaters` keeps them.

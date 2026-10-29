@@ -47,6 +47,7 @@ https://github.com/user-attachments/assets/ecc9e9ec-e91f-4eba-927d-86322796459a
 
 ## 更新日志
 
+- 🛡️ **[2026-10-29]** 加入默认启用的深度预过滤，减少遮挡边界附近的纹理串色，提升单视角生成的鲁棒性。查看[效果对比与用法](docs/texturing.md#depth-pre-filter)。
 - 🔥 **[2026-10-19]** 发布推理代码，支持[图像生成 3D](docs/end_to_end.md)和[网格纹理生成](docs/texturing.md)，并公开[训练流程概述](docs/train.md)。
 - 🎨 **[2026-10-18]** [SUPRA-Tex 工作室](https://supra-3d.github.io/supratex/studio/studio.html)开放参观。
 - 📄 **[2026-10-16]** 发布[项目主页](https://supra-3d.github.io/supratex/)和[论文](https://arxiv.org/abs/2610.22352)。
@@ -120,6 +121,17 @@ python scripts/run_example.py --input assets/metalwork_candle_jar.png \
 RMBG-2 或 BiRefNet。换成你自己的图像，只需修改 `--input`。
 输出是一个包含基础色、金属度和粗糙度贴图的 GLB，旁边的工作目录会保留中间文件和运行记录 `run.json`。
 
+**本地网页界面。** 按上面的步骤安装环境、准备模型后，可在单张 GPU 上启动 Gradio 界面：
+
+```bash
+pip install -e '.[app]'
+python app.py
+```
+
+上传 RGB/RGBA 图像、设置 seed，即可预览并下载 GLB。默认开启低显存模式和深度预过滤，
+纹理细化可按需勾选。RGB 输入需要第 1 步中的 RMBG-2 或 BiRefNet。
+启动参数和远程访问方式见[本地网页界面指南](docs/app.md)。
+
 **为已有网格生成纹理。** 如果已经有网格，再提供对应的相机、前景图像和参考视角的材质图，就能直接补全 PBR 纹理。
 仓库在 [`assets/examples/pitcher_plant`](assets/examples/pitcher_plant) 中附带了项目主页上的猪笼草网格及其输入，
 这也是 `texturing.py` 的默认输入：
@@ -133,6 +145,14 @@ python texturing.py --pipeline supra3d/supra-tex --output outputs/pitcher_plant_
 ## 提升生成效果
 
 大多数输入用默认设置即可。如果效果不够理想，可以试试下面的方法；想提升运行速度，请看[推理速度](#推理速度)。
+
+- **减少纹理串色**：单视角图像生成 3D 默认启用深度预过滤，在补全前剔除遮挡边界附近不可靠的材质观测。
+  下方鳗鱼机器案例中，从电机支脚延伸到深色底座的黄色拖尾被消除，电机本身的黄铜色仍然保留。
+  加 `--no-filter` 可关闭；具体用法及其与 refine 的关系见[深度预过滤](docs/texturing.md#depth-pre-filter)。
+
+  ![深度预过滤对比：左侧关闭，右侧开启；下方放大图展示电机下方的黄色纹理串色变化。](assets/docs/depth_prefilter_eel.png)
+
+  两组使用相同的输入几何、相机、参考材质和 seed 42，均为 `--refine` 之前的结果；局部放大展示电机与底座的交界处。
 
 - **细化纹理**：遇到非常细小、精密的文字和纹理时，可以加上 `--refine`。它会在导出后进一步细化可见区域的纹理，
   并与输入图像对齐。由于会多花一些时间（RTX 3090 上约两分钟），默认不开启。
@@ -182,6 +202,7 @@ python texturing.py --pipeline supra3d/supra-tex --output outputs/pitcher_plant_
 | 指南 | 内容 |
 | --- | --- |
 | [快速开始](docs/quickstart.md) | 安装、准备模型和首次运行的详细步骤 |
+| [本地网页界面](docs/app.md) | Gradio 界面、单卡设置和远程访问 |
 | [方法概述](docs/method.md) | 各个阶段的原理及对应代码 |
 | [训练流程概述](docs/train.md) | 数据准备与训练流程 |
 | [端到端推理](docs/end_to_end.md) | `infer.py` 的全部选项 |

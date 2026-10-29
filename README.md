@@ -52,6 +52,7 @@ Learn more on the [project page](https://supra-3d.github.io/supratex/), or try t
 
 ## Release Notes
 
+- 🛡️ **[2026-10-29]** Added a default-on depth pre-filter for single-view image-to-3D, improving robustness to texture leakage near occlusion boundaries. See the [comparison and usage](docs/texturing.md#depth-pre-filter).
 - 🔥 **[2026-10-19]** Inference code released for [image-to-3D](docs/end_to_end.md) and [mesh texturing](docs/texturing.md), along with a [training overview](docs/train.md).
 - 🎨 **[2026-10-18]** The [SUPRA-Tex Studio](https://supra-3d.github.io/supratex/studio/studio.html) is open for a tour.
 - 📄 **[2026-10-16]** [Project page](https://supra-3d.github.io/supratex/) and [paper](https://arxiv.org/abs/2610.22352) released.
@@ -137,6 +138,19 @@ the RMBG-2 or BiRefNet model from step 1; replace `--input` with your own image.
 The output is a GLB with base color, metallic, and roughness textures. A sibling
 work directory keeps intermediate files and a `run.json` receipt.
 
+**Local web app.** After installing the runtime and preparing the models above,
+start the Gradio interface on a single GPU:
+
+```bash
+pip install -e '.[app]'
+python app.py
+```
+
+Upload an RGB/RGBA image, choose a seed, then preview and download the GLB.
+Low-memory mode and the depth pre-filter are enabled by default; texture
+refinement is optional. RGB inputs need RMBG-2 or BiRefNet from step 1.
+See the [local web app guide](docs/app.md) for settings and remote access.
+
 **Texture an existing mesh.** Given a mesh, its camera, a foreground image, and
 reference-view material maps, complete the PBR textures directly. The repository
 bundles the project-page pitcher plant mesh with its inputs in
@@ -154,6 +168,18 @@ for the input format.
 
 The defaults suit most inputs. When a result falls short, these options help;
 for run time, see [Inference Speed](#inference-speed).
+
+- **Reduce texture leakage.** The depth pre-filter is enabled by default for
+  single-view image-to-3D. It rejects unreliable material observations near
+  occlusion boundaries before completion. In the eel-machine example below,
+  the yellow streak extending from the motor support onto the dark base is
+  removed while the brass motor retains its color. Use `--no-filter` to disable
+  it; see [details and its relation to refinement](docs/texturing.md#depth-pre-filter).
+
+  ![Depth pre-filter comparison: filter off on the left, filter on on the right, with matching close-ups of the yellow texture leakage beneath the motor.](assets/docs/depth_prefilter_eel.png)
+
+  Same input geometry, camera, reference materials, and seed 42; both results
+  are shown before `--refine`. The close-ups highlight the motor/base boundary.
 
 - **Refine fine detail.** For very small, intricate text and textures, add
   `--refine`. After export, it further refines the visible texture and aligns it
@@ -226,6 +252,7 @@ staged commands.
 | Guide | Contents |
 | --- | --- |
 | [Quick start](docs/quickstart.md) | Installation, model preparation, and the first run in detail |
+| [Local web app](docs/app.md) | Gradio interface, single-GPU settings, and remote access |
 | [Method overview](docs/method.md) | Pipeline stages and where each is implemented |
 | [Training overview](docs/train.md) | Data preparation and training workflow |
 | [End-to-end inference](docs/end_to_end.md) | All `infer.py` options |

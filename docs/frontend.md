@@ -44,12 +44,26 @@ For the same options on `infer.py`, use `--material-revision` instead of
 `--revision` (which selects the completion model there).
 Use a fresh output directory. The handoff contains `condition_rgba.png`,
 `condition_rgb.png`, `camera.json`, `image_depth.npy`, `albedo.png`, and `mra.png`.
-`image_depth.npy` is the MoGe-2 camera-z depth on the condition pixel grid
-(NaN where invalid). Single-view completion uses it to exclude source pixels
-whose depth disagrees with the generated geometry near depth edges, and it skips
-this gate when the depth is missing or degenerate. Pass `--no-image-depth` to
-omit it; `--record-material-provenance` omits it because dual-view completion
-does not support the gate.
+`image_depth.npy` stores float32 MoGe-2 camera-z depth on the condition pixel grid,
+with NaN for invalid pixels. Its dimensions must match `condition_rgba.png`;
+completion resizes it to the 1024-square observation grid with nearest-neighbor
+sampling, preserving invalid pixels. Single-view completion uses it to exclude
+source pixels whose depth disagrees with the generated geometry near depth edges.
+The gate is skipped when depth is absent or a valid fit cannot be obtained;
+malformed depth files are rejected.
+
+The depth pre-filter is enabled by default for single-view `infer.py` and
+`python -m supratex.frontend.pipeline` runs. Pass `--no-filter` (alias
+`--no-image-depth`) to either command to disable it by omitting the depth file.
+`infer.py --dual-view` and frontend `--record-material-provenance` omit the file
+because dual-view completion does not support the pre-filter and rejects inputs
+containing `image_depth.npy`. The standalone camera command exports depth only
+when given `--depth-output`, as shown below.
+
+The `infer.py` work directory's `run.json` records `image_depth_filter.requested`,
+`enabled`, and `disabled_reason` (`user_disabled` or `dual_view_unsupported`).
+These fields describe whether the depth input is enabled for the run; a later
+degenerate fit can still skip the gate. An enabled run has a null disabled reason.
 
 For an existing non-opaque foreground RGBA, omit `--with-rmbg` during preparation
 and replace `--rmbg-model` with `--use-input-alpha` in the frontend command.

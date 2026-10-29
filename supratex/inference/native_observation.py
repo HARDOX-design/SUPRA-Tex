@@ -236,15 +236,16 @@ def _admitted_pixels(depth: np.ndarray, missed: np.ndarray, focal: tuple[float, 
 
 def pixel_first_occupied(camera: dict[str, Any], occupancy: np.ndarray, trusted: torch.Tensor, depth_edge_rtol: float = 0.04,
                          stats: dict | None = None, image_depth: np.ndarray | None = None,
-                         admitted_out: dict | None = None) -> torch.Tensor:
+                         depth_gate_out: dict | None = None) -> torch.Tensor:
     """Map trusted pixels to first occupied cells, optionally excluding depth conflicts.
 
-    ``admitted_out['pixels']`` is the complementary image-depth-conflict mask
-    for reprojection, not the union of all observation admission rules.
+    With image depth, ``depth_gate_out['keep_mask']`` contains only the depth
+    gate's keep mask for material sampling and reprojection. Alpha and geometry
+    admission remain separate. Diagnostics are written to ``stats['image_depth']``.
     """
     if "extrinsic" in camera:
         return pixel_first_occupied_cv(camera, occupancy, trusted, depth_edge_rtol, stats=stats,
-                                       image_depth=image_depth, admitted_out=admitted_out)
+                                       image_depth=image_depth, depth_gate_out=depth_gate_out)
     if trusted.shape != (RESOLUTION, RESOLUTION):
         raise ValueError("trusted alpha mask must be 1024 by 1024")
     if "camera_angle_x" not in camera or "distance" not in camera:
@@ -270,7 +271,7 @@ def pixel_first_occupied(camera: dict[str, Any], occupancy: np.ndarray, trusted:
     retained = hit_mask.copy()
     retained[hit_mask] &= admitted[y[hit_mask], x[hit_mask]]
     if image_depth is not None:
-        mismatch = _image_depth_mask(camera, occupancy, image_depth, stats, admitted_out)
+        mismatch = _image_depth_mask(camera, occupancy, image_depth, stats, depth_gate_out)
         rejected = retained & mismatch[y, x]
         retained &= ~mismatch[y, x]
         if stats is not None:
@@ -341,16 +342,15 @@ def first_hit_depth(camera: dict[str, Any], occupancy: np.ndarray) -> np.ndarray
 
 
 def _image_depth_mask(camera: dict[str, Any], occupancy: np.ndarray, image_depth: np.ndarray,
-                      stats: dict | None, admitted_out: dict | None) -> np.ndarray:
+                      stats: dict | None, depth_gate_out: dict | None) -> np.ndarray:
     if np.asarray(image_depth).shape != (RESOLUTION, RESOLUTION):
         raise ValueError("image depth must be an observation-resolution map")
     diagnostic: dict[str, Any] = {}
     mismatch = image_depth_disagreement(first_hit_depth(camera, occupancy), image_depth, stats=diagnostic)
     if stats is not None:
         stats["image_depth"] = diagnostic
-    if admitted_out is not None:
-        admitted_out["pixels"] = ~mismatch
-        admitted_out["image_depth"] = diagnostic
+    if depth_gate_out is not None:
+        depth_gate_out["keep_mask"] = ~mismatch
     return mismatch
 
 
@@ -368,7 +368,7 @@ def pixel_hits_cv(camera: dict[str, Any], occupancy: np.ndarray, mask: np.ndarra
 
 def pixel_first_occupied_cv(camera: dict[str, Any], occupancy: np.ndarray, trusted: torch.Tensor,
                             depth_edge_rtol: float = .04, stats: dict | None = None,
-                            image_depth: np.ndarray | None = None, admitted_out: dict | None = None) -> torch.Tensor:
+                            image_depth: np.ndarray | None = None, depth_gate_out: dict | None = None) -> torch.Tensor:
     """Apply the production first-hit admission rules to a full CV camera."""
     if trusted.shape != (RESOLUTION, RESOLUTION) or trusted.dtype != torch.bool:
         raise ValueError("trusted alpha must be a boolean observation-resolution image")
@@ -394,7 +394,7 @@ def pixel_first_occupied_cv(camera: dict[str, Any], occupancy: np.ndarray, trust
     focal = (float(intrinsic[0, 0]) * RESOLUTION, float(intrinsic[1, 1]) * RESOLUTION)
     retained = hits & _admitted_pixels(depth, missed, focal, depth_edge_rtol, stats=stats)[ys, xs]
     if image_depth is not None:
-        mismatch = _image_depth_mask(camera, occupancy, image_depth, stats, admitted_out)
+        mismatch = _image_depth_mask(camera, occupancy, image_depth, stats, depth_gate_out)
         rejected = retained & mismatch[ys, xs]
         retained &= ~mismatch[ys, xs]
         if stats is not None:

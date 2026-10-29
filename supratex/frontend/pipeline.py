@@ -169,10 +169,9 @@ def run(input_image: Path, output: Path, *, moge_model: str | Path,
         if estimator is not None:
             estimator.close()
     # Depth gating is single-view only; a dual-view front packet must omit it.
-    export_image_depth = export_image_depth and not record_material_provenance
-    depth_path = output / "image_depth.npy"
+    depth_path = output / "image_depth.npy" if export_image_depth and not record_material_provenance else None
     camera = estimate(rgb, moge_model, moge_module, resolution_level, device,
-                      **({"depth_output": depth_path} if export_image_depth else {}))
+                      depth_output=depth_path)
     camera["foreground_source"] = foreground_source
     camera_path = output / "camera.json"
     camera_path.write_text(json.dumps(camera, indent=2) + "\n", encoding="utf-8")
@@ -226,7 +225,7 @@ def run(input_image: Path, output: Path, *, moge_model: str | Path,
     result = {"condition_rgba": str(rgba), "condition_rgb": str(rgb), "camera": str(camera_path),
               "albedo": str(final_albedo), "mra": str(final_mra), "foreground_source": foreground_source,
               "material_backend": material_backend}
-    if export_image_depth:
+    if depth_path is not None:
         result["image_depth"] = str(depth_path)
     if geometry_result:
         result.update(geometry=str(geometry_path), geometry_receipt=geometry_result["receipt"])
@@ -267,8 +266,8 @@ def main() -> None:
     parser.add_argument("--material-checkpoint-manifest", type=Path)
     parser.add_argument("--key", default="input")
     parser.add_argument("--record-material-provenance", action="store_true", help="write material bindings for optional dual-view inference")
-    parser.add_argument("--no-image-depth", action="store_true",
-                        help="omit the optional image_depth.npy filtering input (implied by --record-material-provenance)")
+    parser.add_argument("--no-filter", "--no-image-depth", dest="no_image_depth", action="store_true",
+                        help="disable the default depth pre-filter by omitting image_depth.npy (implied by --record-material-provenance)")
     parser.add_argument("--device", default="cuda")
     parser.add_argument("--attention", choices=("auto", "flash_attn_3", "flash_attn", "sdpa", "xformers"), default="auto")
     parser.add_argument("--low-vram", action=argparse.BooleanOptionalAction, default=None,
